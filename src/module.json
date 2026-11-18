@@ -1,0 +1,15 @@
+{
+    "id": "piano-keys",
+    "name": "Piano Keys",
+    "abbrev": "PIANO",
+    "version": "0.1.0",
+    "description": "Pads as a piano keyboard: white keys on rows 1 and 3, black keys on rows 2 and 4",
+    "author": "chrgthb",
+    "ui": "ui.js",
+    "api_version": 2,
+    "component_type": "overtake",
+    "capabilities": {
+        "midi_out": true,
+        "aftertouch": true
+    }
+}
