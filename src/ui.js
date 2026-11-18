@@ -20,6 +20,7 @@
  *   Up / Down, jog      octave
  *   Shift + jog         transpose (semitones)
  *   Menu                output target (Move / USB / Both)
+ *   Back                exit the module
  *   Shift + Menu        pad pressure: Off / Poly AT / Channel AT / CC
  *   Shift + Up/Down     CC number used for the pressure CC mode
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
@@ -62,6 +63,7 @@ const BOOST_TICKS = 80;
 const WHITE_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
 const BLACK_OFFSETS = [1, 3, null, 6, 8, 10, null, 13];
 
+const BACK_CC = 51;
 const KNOB_COUNT = 8;
 const KNOB_CC_FIRST = 71;        /* MoveKnob1..MoveKnob8 = CC 71..78 */
 const KNOB_TOUCH_FIRST = 0;      /* knob touch = notes 0..7 */
@@ -103,6 +105,7 @@ const knobTouched = new Array(KNOB_COUNT).fill(false);
 let lastKnob = -1;
 let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
 let infoUntil = 0;
+let exiting = false;
 let saveAt = 0;
 let refreshCursor = 0;
 let boostTicks = 0;
@@ -419,6 +422,13 @@ function handleCC(cc, value) {
 
     if (value === 0) return;
 
+    if (cc === BACK_CC) {
+        exiting = true;
+        shutdown();
+        if (typeof host_exit_module === 'function') host_exit_module();
+        return;
+    }
+
     if (shiftHeld && (cc === MoveUp || cc === MoveDown)) adjustPressureCC(cc === MoveUp ? 1 : -1);
     else if (cc === MoveUp) octave = clamp(octave + 1, OCT_MIN, OCT_MAX);
     else if (cc === MoveDown) octave = clamp(octave - 1, OCT_MIN, OCT_MAX);
@@ -549,6 +559,7 @@ globalThis.init = function () {
     channelSent = 0;
     channelSentMask = 0;
     stepLit.fill(-1);
+    exiting = false;
     shiftHeld = false;
     knobTouched.fill(false);
     lastKnob = -1;
@@ -562,13 +573,20 @@ globalThis.onResume = function () {
     stepLit.fill(-1);
 };
 
-globalThis.onUnload = function () {
+/* Safe to run twice (Back handler, then onUnload) */
+function shutdown() {
     releaseAll();
+    for (let i = 0; i < 32; i++) setLED(FIRST_PAD + i, Black, true);
     for (let i = 0; i < 16; i++) setLED(FIRST_STEP + i, Black, true);
+    lit.fill(-1);
+    stepLit.fill(-1);
     if (saveAt) saveSettings();
-};
+}
+
+globalThis.onUnload = shutdown;
 
 globalThis.tick = function () {
+    if (exiting) return;
     if (saveAt && Date.now() >= saveAt) saveSettings();
     flushPressure();
     updateLeds();
