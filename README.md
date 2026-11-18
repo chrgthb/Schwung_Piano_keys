@@ -43,4 +43,16 @@ Notes go to Move's own tracks by default (cable-2 injection), so the track liste
 
 After installing, restart Schwung and pick "Piano Keys" from the overtake modules.
 
+## Release (install from GitHub in Schwung)
+
+Schwung's web UI installs modules from a GitHub repo that has a release with `piano-keys-module.tar.gz` and a `release.json` in the repo root. Both are produced by `.github/workflows/release.yml`:
+
+```bash
+# 1. make sure "version" in src/module.json is the one you want (e.g. 0.1.0)
+# 2. push the repo to https://github.com/chrgthb/Schwung_Piano_keys, then:
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The workflow checks that the tag matches `module.json`, builds the archive, publishes the GitHub release and updates `release.json`. Then add the repo URL in the Schwung web UI.
+
 Not yet tested on a real device; the logic was tested against a mocked host API.
