@@ -52,6 +52,11 @@ const OCT_MIN = -3;
 const OCT_MAX = 3;
 const TRANSPOSE_MAX = 11;
 const LEDS_PER_FRAME = 12;
+/* Move's firmware can overwrite pad LEDs when it plays the injected notes, so
+   pad LEDs are re-sent continuously: slowly at rest, faster right after a pad event */
+const REFRESH_IDLE = 1;
+const REFRESH_BOOST = 6;
+const BOOST_TICKS = 80;
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
 const WHITE_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
@@ -99,6 +104,8 @@ let lastKnob = -1;
 let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
 let infoUntil = 0;
 let saveAt = 0;
+let refreshCursor = 0;
+let boostTicks = 0;
 let pressureInfoUntil = 0;
 
 const pressure = new Array(32).fill(0);   /* pad index -> latest pressure */
@@ -449,7 +456,10 @@ globalThis.onMidiMessageInternal = function (data) {
 
     if (type === MidiNoteOn || type === MidiNoteOff) {
         const padIndex = data[1] - FIRST_PAD;
-        if (padIndex >= 0 && padIndex < 32) handlePad(type, padIndex, data[2]);
+        if (padIndex >= 0 && padIndex < 32) {
+            handlePad(type, padIndex, data[2]);
+            boostTicks = BOOST_TICKS;
+        }
         else if (type === MidiNoteOn && data[2] > 0 && data[1] >= FIRST_STEP && data[1] < FIRST_STEP + 16) {
             toggleChannel(data[1] - FIRST_STEP);
         }
@@ -470,6 +480,15 @@ function updateLeds() {
             lit[i] = color;
             budget--;
         }
+    }
+
+    const refreshCount = boostTicks > 0 ? REFRESH_BOOST : REFRESH_IDLE;
+    if (boostTicks > 0) boostTicks--;
+    for (let n = 0; n < refreshCount; n++) {
+        const color = padColor(refreshCursor);
+        setLED(FIRST_PAD + refreshCursor, color, true);
+        lit[refreshCursor] = color;
+        refreshCursor = (refreshCursor + 1) % 32;
     }
 
     const active = maskOf(currentChannels());
