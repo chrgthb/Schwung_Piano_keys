@@ -1,6 +1,6 @@
 # Piano Keys – Schwung module for Ableton Move
 
-An overtake module that turns the 32 pads into a piano keyboard instead of Move's original in-key / chromatic mode.
+An overtake module that turns the 32 pads into a piano keyboard instead of Move's original in-key / chromatic mode. Works as a simple MIDI controller, can send things even on multiple MIDI channels. Knobs and aftertouch can be set to different CC.
 
 <p align="center">
   <img src="images/Piano_Keys.png" alt="Piano Keys on Ableton Move" width="700">
@@ -59,4 +59,4 @@ You can install this module from Schwung's web UI with Install Custom Module on 
 
 ## Info
 
-Test on hardware is in progress...
+Developed with help of an AI, testing in progress (by human)...
