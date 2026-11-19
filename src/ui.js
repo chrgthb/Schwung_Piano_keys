@@ -17,18 +17,20 @@
  *   Left / Right        channel (Auto, 1..16) (only that channel)
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
- *   Up / Down, jog      octave
- *   Shift + jog         transpose (semitones)
+ *   Up / Down           octave (lowest note shifts by 12)
+ *   Jog turn            move the highlighted (inverted) label: Channel / From / Prg / Out / AT
+ *   Jog click           toggle editing: the value of the highlighted label becomes active and
+ *                       the jog changes it (From = lowest note, Prg = program change 0-127)
+ *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
+ *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
  *   Menu                output target (Move / USB / Both)
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86)
- *   Jog click           pad pressure: Off / Poly AT / Channel AT / CC
- *   Hold jog + turn     CC number used for the pressure CC mode (only in CC mode)
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
  *
- * The CC assignment, last knob values, pressure mode and CC are saved to disk and restored on start.
+ * The CC assignment, last knob values, pressure mode, pressure CC and program are saved to disk and restored on start.
  */
 
 import {
@@ -50,9 +52,8 @@ const PRESSED_COLOR = 126;       /* palette #00FF00 (green) */
 const FIRST_PAD = MovePads[0];
 const FIRST_STEP = 16;           /* step buttons 1-16 = notes 16..31 */
 const BASE_NOTE = 48;            /* lowest C at octave offset 0 */
-const OCT_MIN = -3;
-const OCT_MAX = 3;
-const TRANSPOSE_MAX = 11;
+const FROM_MIN = 0;              /* lowest note of the keyboard */
+const FROM_MAX = 96;
 const LEDS_PER_FRAME = 12;
 /* Move's firmware can overwrite pad LEDs when it plays the injected notes, so
    pad LEDs are re-sent continuously: slowly at rest, faster right after a pad event */
@@ -96,19 +97,29 @@ const AT_SEND_INTERVAL_MS = 20;
 const OUT_MOVE = 0;
 const OUT_USB = 1;
 const OUT_NAMES = ['Move', 'USB', 'Move+USB'];
+const PROGRAM_STATUS = 0xC0;
+
+/* Selectable display items, in jog navigation order */
+const IT_CHANNEL = 0;
+const IT_FROM = 1;
+const IT_PROGRAM = 2;
+const IT_OUT = 3;
+const IT_AT = 4;
+const IT_COUNT = 5;
+const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 let navChannel = 0;              /* Left/Right position: 0 = Auto, 1..16 */
 let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Auto */
 let autoMode = true;             /* follow the selected Move track */
-let octave = 0;
-let transpose = 0;
+let fromNote = BASE_NOTE;        /* note of the lowest C key */
+let program = 0;                 /* last program change value sent */
+let selItem = IT_CHANNEL;        /* highlighted item */
+let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
 let pressureMode = AT_CHANNEL;
-let pressureCC = 1;              /* CC number used in AT_CC mode */
+let pressureCC = 1;              /* CC number used in AT_CC mode, 1..127 */
 let shiftHeld = false;
-let jogHeld = false;
-let jogAdjusted = false;         /* the pressure CC was changed during this jog press */
 let lastAutoChannel = 1;
 let lastAutoPoll = 0;
 let lastDraw = 0;
@@ -130,7 +141,6 @@ let trackReleaseCC = -1;
 let trackReleaseAt = 0;
 let trackIgnoreUntil = 0;
 let boostTicks = 0;
-let pressureInfoUntil = 0;
 
 const pressure = new Array(32).fill(0);   /* pad index -> latest pressure */
 const pressureSent = new Array(32).fill(0);
@@ -156,7 +166,7 @@ function padOffset(padIndex) {
 function padNote(padIndex) {
     const offset = padOffset(padIndex);
     if (offset === null) return null;
-    const note = BASE_NOTE + 12 * octave + transpose + offset;
+    const note = fromNote + offset;
     return note >= 0 && note <= 127 ? note : null;
 }
 
@@ -402,7 +412,8 @@ function loadSettings() {
         const text = host_read_file(SETTINGS_FILE);
         if (!text) return;
         const data = JSON.parse(text);
-        if (Number.isInteger(data.pressureCC)) pressureCC = clamp(data.pressureCC, 0, 127);
+        if (Number.isInteger(data.program)) program = clamp(data.program, 0, 127);
+        if (Number.isInteger(data.pressureCC)) pressureCC = clamp(data.pressureCC, 1, PRESSURE_CC_MAX);
         if (Number.isInteger(data.pressure) && data.pressure >= 0 && data.pressure < AT_NAMES.length) {
             pressureMode = data.pressure;
         }
@@ -421,7 +432,7 @@ function saveSettings() {
     saveAt = 0;
     if (typeof host_write_file !== 'function') return;
     if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
-    host_write_file(SETTINGS_FILE, JSON.stringify({ cc: knobCC, value: knobValue, pressure: pressureMode, pressureCC }));
+    host_write_file(SETTINGS_FILE, JSON.stringify({ cc: knobCC, value: knobValue, pressure: pressureMode, pressureCC, program }));
 }
 
 function scheduleSave() {
@@ -467,21 +478,67 @@ function handleKnobTouch(knob, touched) {
     else if (knob === lastKnob) infoUntil = Date.now() + INFO_HOLD_MS;
 }
 
-function setPressureMode(mode) {
+function setPressure(mode, cc) {
     resetChannelPressure();
     pressureMode = mode;
-    pressureInfoUntil = Date.now() + INFO_HOLD_MS;
+    pressureCC = cc;
     pressure.fill(0);
     pressureSent.fill(0);
     pressureDirty = false;
     scheduleSave();
 }
 
-function adjustPressureCC(delta) {
-    resetChannelPressure();
-    pressureCC = clamp(pressureCC + delta, 0, 127);
-    pressureInfoUntil = Date.now() + INFO_HOLD_MS;
-    scheduleSave();
+function setOutput(next) {
+    output = next;
+    requestTrackSync();
+}
+
+function sendProgramChange(value) {
+    for (const ch of currentChannels()) sendMidi(PROGRAM_STATUS | (ch - 1), value, 0);
+}
+
+/* Pressure options as one list: Off, Poly, Chan, CC1 ... CC127 */
+function pressurePosition() {
+    return pressureMode === AT_CC ? AT_CC + pressureCC - 1 : pressureMode;
+}
+
+function pressureText() {
+    return pressureMode === AT_CC ? `CC${pressureCC}` : AT_NAMES[pressureMode];
+}
+
+/* Jog turn while an item's value is active */
+function adjustSelected(delta) {
+    switch (selItem) {
+        case IT_CHANNEL:
+            selectSingleChannel(clamp(navChannel + delta, 0, 16));
+            break;
+        case IT_FROM:
+            fromNote = clamp(fromNote + delta, FROM_MIN, FROM_MAX);
+            break;
+        case IT_PROGRAM: {
+            const next = clamp(program + delta, 0, 127);
+            if (next === program) break;
+            program = next;
+            sendProgramChange(program);
+            scheduleSave();
+            break;
+        }
+        case IT_OUT:
+            setOutput(clamp(output + delta, 0, OUT_NAMES.length - 1));
+            break;
+        case IT_AT: {
+            const pos = pressurePosition();
+            const next = clamp(pos + delta, 0, AT_CC + PRESSURE_CC_MAX - 1);
+            if (next === pos) break;
+            if (next >= AT_CC) setPressure(AT_CC, next - AT_CC + 1);
+            else setPressure(next, pressureCC);
+            break;
+        }
+    }
+}
+
+function shiftOctave(octaves) {
+    fromNote = clamp(fromNote + 12 * octaves, FROM_MIN, FROM_MAX);
 }
 
 function handleCC(cc, value) {
@@ -490,27 +547,18 @@ function handleCC(cc, value) {
         return;
     }
 
-    /* Jog click cycles the pressure mode on release, unless it was held to turn the CC.
+    /* Jog click toggles between moving the selection and editing its value.
        Shift + jog click belongs to Schwung (exit) */
     if (cc === MoveMainButton) {
-        if (value > 0) {
-            jogHeld = !shiftHeld;
-            jogAdjusted = false;
-        } else if (jogHeld) {
-            jogHeld = false;
-            if (!jogAdjusted) setPressureMode((pressureMode + 1) % AT_NAMES.length);
-        }
+        if (value > 0 && !shiftHeld) editing = !editing;
         return;
     }
 
     if (cc === MoveMainKnob) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        if (jogHeld && pressureMode === AT_CC) {
-            adjustPressureCC(delta);
-            jogAdjusted = true;
-        } else if (shiftHeld) transpose = clamp(transpose + delta, -TRANSPOSE_MAX, TRANSPOSE_MAX);
-        else octave = clamp(octave + delta, OCT_MIN, OCT_MAX);
+        if (editing) adjustSelected(delta);
+        else selItem = clamp(selItem + delta, 0, IT_COUNT - 1);
         return;
     }
 
@@ -530,14 +578,11 @@ function handleCC(cc, value) {
         return;
     }
 
-    if (cc === MoveUp) octave = clamp(octave + 1, OCT_MIN, OCT_MAX);
-    else if (cc === MoveDown) octave = clamp(octave - 1, OCT_MIN, OCT_MAX);
+    if (cc === MoveUp) shiftOctave(1);
+    else if (cc === MoveDown) shiftOctave(-1);
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
-    else if (cc === MoveMenu) {
-        output = (output + 1) % OUT_NAMES.length;
-        requestTrackSync();
-    }
+    else if (cc === MoveMenu) setOutput((output + 1) % OUT_NAMES.length);
     else if (cc >= MoveRow4 && cc <= MoveRow1) selectSingleChannel(MoveRow1 - cc + 1);
 }
 
@@ -655,11 +700,6 @@ function drawKnobCCList() {
 }
 
 function drawKnobInfo() {
-    if (Date.now() < pressureInfoUntil) {
-        print(2, 40, `Pressure: ${AT_NAMES[pressureMode]}`, 1);
-        print(2, 50, `Pressure CC: ${pressureCC}`, 1);
-        return;
-    }
     const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
     if (!active) {
         drawKnobCCList();
@@ -671,6 +711,28 @@ function drawKnobInfo() {
     else print(2, 50, shiftHeld ? 'Turn to set CC' : 'Shift+knob: set CC', 1);
 }
 
+/* Text, inverted (white box, black text) when highlighted */
+function drawText(x, y, text, inverted) {
+    if (inverted) {
+        fill_rect(x - 1, Math.max(0, y - 1), text_width(text) + 2, 9, 1);
+        print(x, y, text, 0);
+    } else {
+        print(x, y, text, 1);
+    }
+}
+
+/* "label value": the label is inverted while the item is selected, the value while it is
+   being edited. A negative x right-aligns the item to the screen edge. */
+function drawItem(item, x, y, label, value) {
+    const gap = 3;
+    const labelW = text_width(label);
+    const width = labelW + gap + text_width(value);
+    const left = x < 0 ? 128 + x - width : x;
+    const selected = selItem === item;
+    drawText(left, y, label, selected && !editing);
+    drawText(left + labelW + gap, y, value, selected && editing);
+}
+
 function drawUI() {
     const now = Date.now();
     if (now - lastDraw < DRAW_INTERVAL_MS) return;
@@ -679,14 +741,12 @@ function drawUI() {
     const chs = currentChannels();
     let chText = autoMode ? `Auto (${chs[0]})` : chs.join(',');
     if (chText.length > 12) chText = `${chs.length} selected`;
-    const low = BASE_NOTE + 12 * octave + transpose;
-    const trText = transpose > 0 ? `+${transpose}` : `${transpose}`;
     print(2, 0, 'Piano Keys', 1);
-    print(2, 10, `Channel: ${chText}`, 1);
-    print(2, 20, `From: ${noteName(Math.max(0, low))}  Tr: ${trText}`, 1);
-    print(2, 30, `Out: ${OUT_NAMES[output]}`, 1);
-    const atText = pressureMode === AT_CC ? `AT>CC${pressureCC}` : `AT:${AT_NAMES[pressureMode]}`;
-    print(128 - text_width(atText) - 2, 30, atText, 1);
+    drawItem(IT_CHANNEL, 2, 10, 'Channel:', chText);
+    drawItem(IT_FROM, 2, 20, 'From:', noteName(fromNote));
+    drawItem(IT_PROGRAM, 70, 20, 'Prg:', String(program));
+    drawItem(IT_OUT, 2, 30, 'Out:', OUT_NAMES[output]);
+    drawItem(IT_AT, -2, 30, 'AT:', pressureText());
     drawKnobInfo();
 }
 
@@ -715,7 +775,8 @@ globalThis.init = function () {
     stepLit.fill(-1);
     exiting = false;
     shiftHeld = false;
-    jogHeld = false;
+    selItem = IT_CHANNEL;
+    editing = false;
     knobTouched.fill(false);
     lastKnob = -1;
     loadSettings();
