@@ -60,4 +60,4 @@ git tag v0.2.0 && git push origin v0.2.0
 
 The workflow checks that the tag matches `module.json`, builds the archive, publishes the GitHub release and updates `release.json`. Then add the repo URL in the Schwung web UI.
 
-Not yet tested on a real device; the logic was tested against a mocked host API.
+Test on hardware is in progress...
