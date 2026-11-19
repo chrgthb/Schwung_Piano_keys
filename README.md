@@ -31,6 +31,10 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 
 **Auto channel**: the channel of the track selected on Move when the module starts (track N ↔ channel N). During takeover the track buttons belong to the module, so use the track buttons or Left/Right to change the channel. Pressing a step button leaves Auto and selects that channel; further steps add or remove channels (at least one stays on).
 
+**Track selection**: if a Move track's MIDI In channel is "Auto", it plays whatever channel arrives as long as it is the *selected* track. Since the module owns the track buttons, whenever you pick channel 1–4 it presses the matching track button on Move's behalf (and retries until Move reports that track selected), so the sound follows the channel. For best results set the tracks' MIDI In to their own channel (1–4) in Move.
+
+**LEDs**: the module asks Schwung to suppress Move's own LED sysex (`shadow_set_overtake_suppress_sysex`) so the firmware stops repainting the pads in its in-key/chromatic layout, and also re-sends pad, step and track button LEDs round-robin (1–2 USB-MIDI packets per tick) as a safety net.
+
 Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Menu button also lets you send them to a USB-A device.
 
 **Knob CCs**: they use the same channel and output target as the notes. The CC assignment, last knob values and pressure mode and CC number are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.

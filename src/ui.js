@@ -58,6 +58,13 @@ const LEDS_PER_FRAME = 12;
 const REFRESH_IDLE = 1;
 const REFRESH_BOOST = 6;
 const BOOST_TICKS = 80;
+/* Move's "Auto" MIDI-in channel plays whichever track is selected on Move, whatever the
+   channel number. The module owns the track buttons, so it presses them on Move's behalf */
+const TRACK_PRESS_MS = 40;
+const TRACK_RETRY_MS = 250;
+const TRACK_MAX_TRIES = 4;
+const TRACK_IGNORE_MS = 400;     /* ignore echoes of our own injected track press */
+const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
 const WHITE_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
@@ -108,6 +115,13 @@ let infoUntil = 0;
 let exiting = false;
 let saveAt = 0;
 let refreshCursor = 0;
+let auxCursor = 0;
+let trackSyncPending = false;
+let trackSyncTries = 0;
+let trackSyncAt = 0;
+let trackReleaseCC = -1;
+let trackReleaseAt = 0;
+let trackIgnoreUntil = 0;
 let boostTicks = 0;
 let pressureInfoUntil = 0;
 
@@ -173,6 +187,7 @@ function selectSingleChannel(ch) {
     navChannel = ch;
     autoMode = ch === 0;
     channelMask = ch === 0 ? 0 : 1 << (ch - 1);
+    requestTrackSync();
 }
 
 function toggleChannel(index) {
@@ -185,6 +200,58 @@ function toggleChannel(index) {
         channelMask = next;
     }
     navChannel = index + 1;
+    requestTrackSync();
+}
+
+/* Move track (1-4) that should be selected so its instrument gets the notes; 0 = none */
+function targetTrack() {
+    if (autoMode || output === OUT_USB) return 0;
+    if (navChannel >= 1 && navChannel <= 4 && (channelMask & (1 << (navChannel - 1)))) return navChannel;
+    for (let ch = 1; ch <= 4; ch++) {
+        if (channelMask & (1 << (ch - 1))) return ch;
+    }
+    return 0;
+}
+
+function requestTrackSync() {
+    trackSyncPending = true;
+    trackSyncTries = 0;
+    trackSyncAt = 0;
+}
+
+function injectTrackButton(cc, value) {
+    move_midi_inject_to_move([0x0B, MidiCC, cc, value]);
+}
+
+/* Select the target track on Move itself by injecting a track button press, retried
+   until host_get_move_info reports it selected (one attempt when that is unavailable) */
+function syncMoveTrack() {
+    if (typeof move_midi_inject_to_move !== 'function') return;
+    const now = Date.now();
+    if (trackReleaseCC >= 0) {
+        if (now < trackReleaseAt) return;
+        injectTrackButton(trackReleaseCC, 0);
+        trackReleaseCC = -1;
+        trackIgnoreUntil = now + TRACK_IGNORE_MS;
+        trackSyncAt = now + TRACK_RETRY_MS;
+        return;
+    }
+    if (!trackSyncPending || now < trackSyncAt) return;
+
+    const target = targetTrack();
+    const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
+    const known = !!(info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3);
+    if (target === 0 || (known && info.selectedTrack + 1 === target) ||
+        trackSyncTries >= (known ? TRACK_MAX_TRIES : 1)) {
+        trackSyncPending = false;
+        return;
+    }
+    trackSyncTries++;
+    const cc = MoveRow1 - (target - 1);
+    injectTrackButton(cc, 127);
+    trackReleaseCC = cc;
+    trackReleaseAt = now + TRACK_PRESS_MS;
+    trackIgnoreUntil = now + TRACK_PRESS_MS + TRACK_IGNORE_MS;
 }
 
 /* Send a channel message on every channel in chs */
@@ -381,7 +448,9 @@ function handleKnob(knob, value) {
 
 function handleKnobTouch(knob, touched) {
     knobTouched[knob] = touched;
-    showKnobInfo(knob, 'touch');
+    if (touched) showKnobInfo(knob, 'touch');
+    /* A release must not steal the display from a knob touched since */
+    else if (knob === lastKnob) infoUntil = Date.now() + INFO_HOLD_MS;
 }
 
 function setPressureMode(mode) {
@@ -420,6 +489,8 @@ function handleCC(cc, value) {
         return;
     }
 
+    if (cc >= MoveRow4 && cc <= MoveRow1 && Date.now() < trackIgnoreUntil) return;
+
     if (value === 0) return;
 
     if (cc === BACK_CC) {
@@ -435,7 +506,10 @@ function handleCC(cc, value) {
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
     else if (cc === MoveMenu && shiftHeld) setPressureMode((pressureMode + 1) % AT_NAMES.length);
-    else if (cc === MoveMenu) output = (output + 1) % OUT_NAMES.length;
+    else if (cc === MoveMenu) {
+        output = (output + 1) % OUT_NAMES.length;
+        requestTrackSync();
+    }
     else if (cc >= MoveRow4 && cc <= MoveRow1) selectSingleChannel(MoveRow1 - cc + 1);
 }
 
@@ -481,6 +555,14 @@ globalThis.onMidiMessageInternal = function (data) {
 /* External MIDI is not used by this module */
 globalThis.onMidiMessageExternal = function () {};
 
+function stepColor(active, i) {
+    return active & (1 << i) ? White : Black;
+}
+
+function trackColor(active, cc) {
+    return active & (1 << (MoveRow1 - cc)) ? White : DarkGrey3;
+}
+
 function updateLeds() {
     let budget = LEDS_PER_FRAME;
     for (let i = 0; i < 32 && budget > 0; i++) {
@@ -503,17 +585,25 @@ function updateLeds() {
 
     const active = maskOf(currentChannels());
     for (let i = 0; i < 16; i++) {
-        const color = active & (1 << i) ? White : Black;
+        const color = stepColor(active, i);
         if (stepLit[i] !== color) {
             setLED(FIRST_STEP + i, color, true);
             stepLit[i] = color;
         }
     }
 
-    for (let cc = MoveRow4; cc <= MoveRow1; cc++) {
-        const trackChannel = MoveRow1 - cc + 1;
-        setButtonLED(cc, active & (1 << (trackChannel - 1)) ? White : DarkGrey3);
+    for (let cc = MoveRow4; cc <= MoveRow1; cc++) setButtonLED(cc, trackColor(active, cc));
+
+    /* Step and track button LEDs are re-sent too: the cache can't see Move overwrite them */
+    if (auxCursor < 16) {
+        const color = stepColor(active, auxCursor);
+        setLED(FIRST_STEP + auxCursor, color, true);
+        stepLit[auxCursor] = color;
+    } else {
+        const cc = MoveRow4 + auxCursor - 16;
+        setButtonLED(cc, trackColor(active, cc), true);
     }
+    auxCursor = (auxCursor + 1) % AUX_LED_COUNT;
 }
 
 function drawKnobInfo() {
@@ -525,13 +615,12 @@ function drawKnobInfo() {
     const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
     if (!active) {
         print(2, 40, 'Knobs: CC ' + knobCC[0] + '-' + knobCC[KNOB_COUNT - 1], 1);
-        print(2, 50, 'Shift+knob: set CC', 1);
         return;
     }
     print(2, 40, `Knob ${lastKnob + 1}: CC ${knobCC[lastKnob]}`, 1);
     if (lastKnobAction === 'turn') print(2, 50, `Value: ${knobValue[lastKnob]}`, 1);
     else if (lastKnobAction === 'assign') print(2, 50, 'CC assigned', 1);
-    else if (shiftHeld) print(2, 50, 'Turn to set CC', 1);
+    else print(2, 50, shiftHeld ? 'Turn to set CC' : 'Shift+knob: set CC', 1);
 }
 
 function drawUI() {
@@ -550,7 +639,19 @@ function drawUI() {
     drawKnobInfo();
 }
 
+/* Stops Move's firmware from repainting the pads with its own in-key/chromatic colors */
+function suppressMoveLeds(on) {
+    if (typeof shadow_set_overtake_suppress_sysex === 'function') {
+        shadow_set_overtake_suppress_sysex(on ? 1 : 0);
+    }
+}
+
 globalThis.init = function () {
+    suppressMoveLeds(true);
+    auxCursor = 0;
+    trackSyncPending = false;
+    trackReleaseCC = -1;
+    trackIgnoreUntil = 0;
     lit.fill(-1);
     held.fill(null);
     pressure.fill(0);
@@ -568,6 +669,7 @@ globalThis.init = function () {
 };
 
 globalThis.onResume = function () {
+    suppressMoveLeds(true);
     invalidateLedCache();
     lit.fill(-1);
     stepLit.fill(-1);
@@ -580,6 +682,11 @@ function shutdown() {
     for (let i = 0; i < 16; i++) setLED(FIRST_STEP + i, Black, true);
     lit.fill(-1);
     stepLit.fill(-1);
+    if (trackReleaseCC >= 0) {
+        if (typeof move_midi_inject_to_move === 'function') injectTrackButton(trackReleaseCC, 0);
+        trackReleaseCC = -1;
+    }
+    suppressMoveLeds(false);
     if (saveAt) saveSettings();
 }
 
@@ -589,6 +696,7 @@ globalThis.tick = function () {
     if (exiting) return;
     if (saveAt && Date.now() >= saveAt) saveSettings();
     flushPressure();
+    syncMoveTrack();
     updateLeds();
     drawUI();
 };
