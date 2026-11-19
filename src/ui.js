@@ -64,6 +64,8 @@ const TRACK_PRESS_MS = 40;
 const TRACK_RETRY_MS = 250;
 const TRACK_MAX_TRIES = 4;
 const TRACK_IGNORE_MS = 400;     /* ignore echoes of our own injected track press */
+const AUTO_POLL_MS = 30;         /* how often Move's selected track is re-read */
+const DRAW_INTERVAL_MS = 40;     /* display redraw rate cap (25 Hz) */
 const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
@@ -105,6 +107,8 @@ let pressureMode = AT_CHANNEL;
 let pressureCC = 1;              /* CC number used in AT_CC mode */
 let shiftHeld = false;
 let lastAutoChannel = 1;
+let lastAutoPoll = 0;
+let lastDraw = 0;
 
 const knobCC = DEFAULT_KNOB_CC.slice();           /* knob -> CC number */
 const knobValue = new Array(KNOB_COUNT).fill(64); /* knob -> last sent value */
@@ -160,6 +164,9 @@ function padColor(padIndex) {
 }
 
 function autoChannel() {
+    const now = Date.now();
+    if (now - lastAutoPoll < AUTO_POLL_MS) return lastAutoChannel;
+    lastAutoPoll = now;
     if (typeof host_get_move_info === 'function') {
         const info = host_get_move_info();
         if (info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3) {
@@ -177,6 +184,10 @@ function currentChannels() {
         if (channelMask & (1 << i)) list.push(i + 1);
     }
     return list;
+}
+
+function activeMask() {
+    return autoMode ? 1 << (autoChannel() - 1) : channelMask;
 }
 
 function maskOf(chs) {
@@ -583,7 +594,7 @@ function updateLeds() {
         refreshCursor = (refreshCursor + 1) % 32;
     }
 
-    const active = maskOf(currentChannels());
+    const active = activeMask();
     for (let i = 0; i < 16; i++) {
         const color = stepColor(active, i);
         if (stepLit[i] !== color) {
@@ -624,6 +635,9 @@ function drawKnobInfo() {
 }
 
 function drawUI() {
+    const now = Date.now();
+    if (now - lastDraw < DRAW_INTERVAL_MS) return;
+    lastDraw = now;
     clear_screen();
     const chs = currentChannels();
     let chText = autoMode ? `Auto (${chs[0]})` : chs.join(',');
@@ -648,6 +662,8 @@ function suppressMoveLeds(on) {
 
 globalThis.init = function () {
     suppressMoveLeds(true);
+    lastAutoPoll = 0;
+    lastDraw = 0;
     auxCursor = 0;
     trackSyncPending = false;
     trackReleaseCC = -1;
