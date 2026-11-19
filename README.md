@@ -43,6 +43,10 @@ Notes go to Move's own tracks by default (cable-2 injection), so the track liste
 
 **Knob CCs**: they use the same channel and output target as the notes. The CC assignment, last knob values and pressure mode, pressure CC number and program are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
 
+## Screen reader
+
+When Schwung's screen reader (TTS) is on, the module announces its state: on start (channel, lowest note, output), on every jog selection and edit, channel and step toggles, octave, output, and knob touch or turn (knob, CC number, value). Pad notes are not announced.
+
 ## Installation
 
 ```bash

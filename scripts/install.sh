@@ -8,5 +8,5 @@ DEST="/data/UserData/schwung/modules/overtake/${ID}"
 SRC="$(cd "$(dirname "$0")/../src" && pwd)"
 
 ssh "ableton@${HOST}" "mkdir -p '${DEST}'"
-scp "${SRC}/module.json" "${SRC}/ui.js" "ableton@${HOST}:${DEST}/"
+scp "${SRC}/module.json" "${SRC}/ui.js" "${SRC}/help.json" "ableton@${HOST}:${DEST}/"
 echo "Installed to ${HOST}:${DEST} - restart Schwung or rescan modules."

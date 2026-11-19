@@ -45,6 +45,8 @@ import {
     setLED, setButtonLED, invalidateLedCache, decodeDelta
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
+import { announce } from '/data/UserData/schwung/shared/screen_reader.mjs';
+
 const WHITE_KEY_COLOR = White;
 const BLACK_KEY_COLOR = 26;      /* palette #FF2BD4 (magenta) */
 const PRESSED_COLOR = 126;       /* palette #00FF00 (green) */
@@ -108,6 +110,9 @@ const IT_AT = 4;
 const IT_COUNT = 5;
 const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const ITEM_NAMES = ['Channel', 'From', 'Program', 'Output', 'Aftertouch'];
+const OUT_SPOKEN = ['Move', 'USB', 'Move and USB'];
+const AT_SPOKEN = ['Off', 'Polyphonic', 'Channel'];
 
 let navChannel = 0;              /* Left/Right position: 0 = Auto, 1..16 */
 let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Auto */
@@ -207,11 +212,31 @@ function maskOf(chs) {
     return chs.reduce((m, ch) => m | (1 << (ch - 1)), 0);
 }
 
+function channelSpeech() {
+    const chs = currentChannels();
+    return autoMode ? `Auto, ${chs[0]}` : chs.join(', ');
+}
+
+function itemSpeech(item) {
+    switch (item) {
+        case IT_CHANNEL: return channelSpeech();
+        case IT_FROM: return noteName(fromNote);
+        case IT_PROGRAM: return String(program);
+        case IT_OUT: return OUT_SPOKEN[output];
+        default: return pressureMode === AT_CC ? `CC ${pressureCC}` : AT_SPOKEN[pressureMode];
+    }
+}
+
+function announceItem(item) {
+    announce(`${ITEM_NAMES[item]}: ${itemSpeech(item)}`);
+}
+
 function selectSingleChannel(ch) {
     navChannel = ch;
     autoMode = ch === 0;
     channelMask = ch === 0 ? 0 : 1 << (ch - 1);
     requestTrackSync();
+    announceItem(IT_CHANNEL);
 }
 
 function toggleChannel(index) {
@@ -220,11 +245,15 @@ function toggleChannel(index) {
         channelMask = 1 << index;
     } else {
         const next = channelMask ^ (1 << index);
-        if (next === 0) return;      /* keep at least one channel */
+        if (next === 0) {            /* keep at least one channel */
+            announce(`Channel ${index + 1} stays on`);
+            return;
+        }
         channelMask = next;
     }
     navChannel = index + 1;
     requestTrackSync();
+    announce(`Channel ${index + 1} ${channelMask & (1 << index) ? 'on' : 'off'}`);
 }
 
 /* Move track (1-4) that should be selected so its instrument gets the notes; 0 = none */
@@ -443,6 +472,8 @@ function showKnobInfo(knob, action) {
     lastKnob = knob;
     lastKnobAction = action;
     infoUntil = Date.now() + INFO_HOLD_MS;
+    if (action === 'assign') announce(`Knob ${knob + 1} assigned to CC ${knobCC[knob]}`);
+    else announce(`Knob ${knob + 1}, CC ${knobCC[knob]}, value ${knobValue[knob]}`);
 }
 
 /* Relative encoder value -> signed step; speed is encoded in the magnitude */
@@ -464,9 +495,10 @@ function handleKnob(knob, value) {
     const step = knobStep(value);
     if (step === 0) return;
     const next = clamp(knobValue[knob] + step, 0, 127);
-    showKnobInfo(knob, 'turn');
-    if (next === knobValue[knob]) return;
+    const changed = next !== knobValue[knob];
     knobValue[knob] = next;
+    showKnobInfo(knob, 'turn');
+    if (!changed) return;
     sendOnChannels(MidiCC, currentChannels(), knobCC[knob], next);
     scheduleSave();
 }
@@ -491,6 +523,7 @@ function setPressure(mode, cc) {
 function setOutput(next) {
     output = next;
     requestTrackSync();
+    announceItem(IT_OUT);
 }
 
 function sendProgramChange(value) {
@@ -514,6 +547,7 @@ function adjustSelected(delta) {
             break;
         case IT_FROM:
             fromNote = clamp(fromNote + delta, FROM_MIN, FROM_MAX);
+            announceItem(IT_FROM);
             break;
         case IT_PROGRAM: {
             const next = clamp(program + delta, 0, 127);
@@ -521,6 +555,7 @@ function adjustSelected(delta) {
             program = next;
             sendProgramChange(program);
             scheduleSave();
+            announceItem(IT_PROGRAM);
             break;
         }
         case IT_OUT:
@@ -532,6 +567,7 @@ function adjustSelected(delta) {
             if (next === pos) break;
             if (next >= AT_CC) setPressure(AT_CC, next - AT_CC + 1);
             else setPressure(next, pressureCC);
+            announceItem(IT_AT);
             break;
         }
     }
@@ -539,6 +575,7 @@ function adjustSelected(delta) {
 
 function shiftOctave(octaves) {
     fromNote = clamp(fromNote + 12 * octaves, FROM_MIN, FROM_MAX);
+    announceItem(IT_FROM);
 }
 
 function handleCC(cc, value) {
@@ -550,15 +587,23 @@ function handleCC(cc, value) {
     /* Jog click toggles between moving the selection and editing its value.
        Shift + jog click belongs to Schwung (exit) */
     if (cc === MoveMainButton) {
-        if (value > 0 && !shiftHeld) editing = !editing;
+        if (value > 0 && !shiftHeld) {
+            editing = !editing;
+            if (editing) announce(`Editing ${ITEM_NAMES[selItem]}`);
+            else announceItem(selItem);
+        }
         return;
     }
 
     if (cc === MoveMainKnob) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        if (editing) adjustSelected(delta);
-        else selItem = clamp(selItem + delta, 0, IT_COUNT - 1);
+        if (editing) {
+            adjustSelected(delta);
+        } else {
+            selItem = clamp(selItem + delta, 0, IT_COUNT - 1);
+            announceItem(selItem);
+        }
         return;
     }
 
@@ -781,6 +826,8 @@ globalThis.init = function () {
     lastKnob = -1;
     loadSettings();
     autoChannel();
+    announce(`Piano Keys. ${ITEM_NAMES[IT_CHANNEL]}: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
+        `Output: ${OUT_SPOKEN[output]}`);
 };
 
 globalThis.onResume = function () {

@@ -1,0 +1,125 @@
+{
+  "title": "Piano Keys",
+  "children": [
+    {
+      "title": "Overview",
+      "lines": [
+        "Pads become a piano",
+        "keyboard and send",
+        "MIDI notes, pressure",
+        "and knob CCs.",
+        "",
+        "Rows 1+3: white keys",
+        "Rows 2+4: black keys",
+        "Pressed key: green"
+      ]
+    },
+    {
+      "title": "Channel",
+      "lines": [
+        "Track 1-4: channel",
+        " 1-4 only",
+        "Left/Right: Auto,",
+        " then 1-16",
+        "Steps 1-16: toggle",
+        " channels. All active",
+        " ones get the notes",
+        "",
+        "Auto: channel of the",
+        " track selected on",
+        " Move at start"
+      ]
+    },
+    {
+      "title": "Screen & Jog",
+      "lines": [
+        "Jog turn: move the",
+        " highlighted label",
+        "Jog click: edit its",
+        " value, click again",
+        " to finish",
+        "",
+        "Channel: MIDI ch",
+        "From: lowest note",
+        "Prg: program change",
+        " 0-127, sent on",
+        " every change",
+        "Out: output target",
+        "AT: pressure mode"
+      ]
+    },
+    {
+      "title": "Octave & Output",
+      "lines": [
+        "Up/Down: octave",
+        " (From moves by 12)",
+        "",
+        "Menu: output",
+        " Move / USB /",
+        " Move+USB",
+        "",
+        "Move = Move tracks",
+        "USB = USB-A device"
+      ]
+    },
+    {
+      "title": "Pressure",
+      "lines": [
+        "AT setting:",
+        " Off",
+        " Poly: key pressure",
+        " Chan: channel",
+        "  pressure (default)",
+        " CC1, CC2 .. CC127:",
+        "  pressure as a CC"
+      ]
+    },
+    {
+      "title": "Knobs",
+      "lines": [
+        "Knobs 1-8 send CC",
+        " 71-78 by default",
+        "Faster turn gives",
+        " bigger steps",
+        "",
+        "Shift + knob:",
+        " set the CC number",
+        " 0-127 (nothing is",
+        " sent)",
+        "",
+        "Touch knob: shows",
+        " its CC number,",
+        " turning shows value"
+      ]
+    },
+    {
+      "title": "Tips",
+      "lines": [
+        "Set Move tracks'",
+        " MIDI In to their",
+        " own channel 1-4",
+        "for best results.",
+        "",
+        "Selecting channel",
+        " 1-4 also selects the",
+        " matching Move track",
+        "",
+        "CCs, program and",
+        " pressure mode are",
+        " saved and restored"
+      ]
+    },
+    {
+      "title": "Exit",
+      "lines": [
+        "Back: exit module",
+        "",
+        "Or: Shift + Volume",
+        " touch + jog click",
+        "",
+        "Play/Record stay",
+        " under Move control"
+      ]
+    }
+  ]
+}
