@@ -1,5 +1,5 @@
 {
-  "version": "0.2.3",
+  "version": "0.2.4",
   "download_url": "https://github.com/chrgthb/Schwung_Piano_keys/releases/latest/download/piano-keys-module.tar.gz",
   "name": "Piano Keys",
   "description": "Pads as a piano keyboard with multi-channel output, aftertouch and knob CCs",
