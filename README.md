@@ -21,9 +21,10 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 | Up / Down, jog | Octave (−3…+3) |
 | Shift + jog | Transpose (±11 semitones) |
 | Menu | Output: Move / USB / Move+USB |
+| Play / Record | Handled by Move itself (start/stop, record); the button LEDs stay Move-driven |
 | Back | Exit the module |
-| Shift + Menu | Pad pressure: Off / Poly aftertouch / Channel aftertouch / CC (default: Channel) |
-| Shift + Up / Down | Pressure CC number (0–127, default 1), used in CC mode |
+| Jog click | Pad pressure: Off / Poly aftertouch / Channel aftertouch / CC (default: Channel) |
+| Hold jog + turn | Pressure CC number (0–127, default 1), only in CC mode |
 | Knobs 1–8 | Send MIDI CC (default CC 71–78, value 0–127, faster turn = bigger steps) |
 | Shift + knob | Reassign that knob's CC number (0–127); nothing is sent |
 | Touch knob | Display shows the knob's CC number; turning also shows the value |

@@ -21,8 +21,9 @@
  *   Shift + jog         transpose (semitones)
  *   Menu                output target (Move / USB / Both)
  *   Back                exit the module
- *   Shift + Menu        pad pressure: Off / Poly AT / Channel AT / CC
- *   Shift + Up/Down     CC number used for the pressure CC mode
+ *   Play / Record       passed through to Move (module.json button_passthrough 85, 86)
+ *   Jog click           pad pressure: Off / Poly AT / Channel AT / CC
+ *   Hold jog + turn     CC number used for the pressure CC mode (only in CC mode)
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
@@ -32,7 +33,7 @@
 
 import {
     MidiNoteOn, MidiNoteOff, MidiCC,
-    MoveShift, MoveMenu, MoveMainKnob, MoveUp, MoveDown, MoveLeft, MoveRight,
+    MoveShift, MoveMenu, MoveMainKnob, MoveMainButton, MoveUp, MoveDown, MoveLeft, MoveRight,
     MoveRow1, MoveRow4,
     MovePads, White, DarkGrey3, Black
 } from '/data/UserData/schwung/shared/constants.mjs';
@@ -106,6 +107,8 @@ let output = OUT_MOVE;
 let pressureMode = AT_CHANNEL;
 let pressureCC = 1;              /* CC number used in AT_CC mode */
 let shiftHeld = false;
+let jogHeld = false;
+let jogAdjusted = false;         /* the pressure CC was changed during this jog press */
 let lastAutoChannel = 1;
 let lastAutoPoll = 0;
 let lastDraw = 0;
@@ -487,10 +490,26 @@ function handleCC(cc, value) {
         return;
     }
 
+    /* Jog click cycles the pressure mode on release, unless it was held to turn the CC.
+       Shift + jog click belongs to Schwung (exit) */
+    if (cc === MoveMainButton) {
+        if (value > 0) {
+            jogHeld = !shiftHeld;
+            jogAdjusted = false;
+        } else if (jogHeld) {
+            jogHeld = false;
+            if (!jogAdjusted) setPressureMode((pressureMode + 1) % AT_NAMES.length);
+        }
+        return;
+    }
+
     if (cc === MoveMainKnob) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        if (shiftHeld) transpose = clamp(transpose + delta, -TRANSPOSE_MAX, TRANSPOSE_MAX);
+        if (jogHeld && pressureMode === AT_CC) {
+            adjustPressureCC(delta);
+            jogAdjusted = true;
+        } else if (shiftHeld) transpose = clamp(transpose + delta, -TRANSPOSE_MAX, TRANSPOSE_MAX);
         else octave = clamp(octave + delta, OCT_MIN, OCT_MAX);
         return;
     }
@@ -511,12 +530,10 @@ function handleCC(cc, value) {
         return;
     }
 
-    if (shiftHeld && (cc === MoveUp || cc === MoveDown)) adjustPressureCC(cc === MoveUp ? 1 : -1);
-    else if (cc === MoveUp) octave = clamp(octave + 1, OCT_MIN, OCT_MAX);
+    if (cc === MoveUp) octave = clamp(octave + 1, OCT_MIN, OCT_MAX);
     else if (cc === MoveDown) octave = clamp(octave - 1, OCT_MIN, OCT_MAX);
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
-    else if (cc === MoveMenu && shiftHeld) setPressureMode((pressureMode + 1) % AT_NAMES.length);
     else if (cc === MoveMenu) {
         output = (output + 1) % OUT_NAMES.length;
         requestTrackSync();
@@ -617,6 +634,26 @@ function updateLeds() {
     auxCursor = (auxCursor + 1) % AUX_LED_COUNT;
 }
 
+/* All knob CC numbers in 3-digit right-aligned cells: knobs 1-3 after the label on the
+   first line, knobs 4-8 on the second line, the last three under the first three */
+function drawKnobCCList() {
+    const label = 'Knobs CC: ';
+    const cellW = text_width('000 ');
+    const digitsW = text_width('000');
+    const firstX = 2 + text_width(label);
+    const topCount = 3;
+    const drawCell = (knob, x, y) => {
+        const s = String(knobCC[knob]);
+        print(x + digitsW - text_width(s), y, s, 1);
+    };
+
+    print(2, 40, label, 1);
+    for (let k = 0; k < KNOB_COUNT; k++) {
+        if (k < topCount) drawCell(k, firstX + k * cellW, 40);
+        else drawCell(k, firstX + (k - KNOB_COUNT + topCount) * cellW, 50);
+    }
+}
+
 function drawKnobInfo() {
     if (Date.now() < pressureInfoUntil) {
         print(2, 40, `Pressure: ${AT_NAMES[pressureMode]}`, 1);
@@ -625,7 +662,7 @@ function drawKnobInfo() {
     }
     const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
     if (!active) {
-        print(2, 40, 'Knobs: CC ' + knobCC[0] + '-' + knobCC[KNOB_COUNT - 1], 1);
+        drawKnobCCList();
         return;
     }
     print(2, 40, `Knob ${lastKnob + 1}: CC ${knobCC[lastKnob]}`, 1);
@@ -678,6 +715,7 @@ globalThis.init = function () {
     stepLit.fill(-1);
     exiting = false;
     shiftHeld = false;
+    jogHeld = false;
     knobTouched.fill(false);
     lastKnob = -1;
     loadSettings();
