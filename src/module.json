@@ -2,7 +2,7 @@
     "id": "piano-keys",
     "name": "Piano Keys",
     "abbrev": "PIANO",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "description": "Pads as a piano keyboard: white keys on rows 1 and 3, black keys on rows 2 and 4",
     "author": "chrgthb",
     "ui": "ui.js",
