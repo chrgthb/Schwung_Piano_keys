@@ -2,6 +2,10 @@
 
 An overtake module that turns the 32 pads into a piano keyboard instead of Move's original in-key / chromatic mode.
 
+<p align="center">
+  <img src="images/Piano_Keys.png" alt="Piano Keys on Ableton Move" width="700">
+</p>
+
 ```
 Row 4  C#  D#   –   F#  G#  A#   –   C#     (black, magenta)   upper octave
 Row 3  C   D    E   F   G   A    B   C      (white)            upper octave
