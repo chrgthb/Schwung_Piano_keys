@@ -795,15 +795,7 @@ function drawUI() {
     drawKnobInfo();
 }
 
-/* Stops Move's firmware from repainting the pads with its own in-key/chromatic colors */
-function suppressMoveLeds(on) {
-    if (typeof shadow_set_overtake_suppress_sysex === 'function') {
-        shadow_set_overtake_suppress_sysex(on ? 1 : 0);
-    }
-}
-
 globalThis.init = function () {
-    suppressMoveLeds(true);
     lastAutoPoll = 0;
     lastDraw = 0;
     auxCursor = 0;
@@ -831,7 +823,6 @@ globalThis.init = function () {
 };
 
 globalThis.onResume = function () {
-    suppressMoveLeds(true);
     invalidateLedCache();
     lit.fill(-1);
     stepLit.fill(-1);
@@ -848,7 +839,6 @@ function shutdown() {
         if (typeof move_midi_inject_to_move === 'function') injectTrackButton(trackReleaseCC, 0);
         trackReleaseCC = -1;
     }
-    suppressMoveLeds(false);
     if (saveAt) saveSettings();
 }
 
