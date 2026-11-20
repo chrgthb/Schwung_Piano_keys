@@ -25,7 +25,8 @@
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
  *   Menu                output target (Move / USB / Both)
  *   Back                exit the module
- *   Play / Record       passed through to Move (module.json button_passthrough 85, 86)
+ *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
+ *                       follow the transport state tracked by the module
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
@@ -36,8 +37,8 @@
 import {
     MidiNoteOn, MidiNoteOff, MidiCC,
     MoveShift, MoveMenu, MoveMainKnob, MoveMainButton, MoveUp, MoveDown, MoveLeft, MoveRight,
-    MoveRow1, MoveRow4,
-    MovePads, White, DarkGrey3, Black
+    MoveRow1, MoveRow4, MovePlay, MoveRec,
+    MovePads, White, DarkGrey3, Black, Green, Red
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 import {
@@ -136,6 +137,8 @@ let lastKnob = -1;
 let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
 let infoUntil = 0;
 let exiting = false;
+let exitAt = 0;
+const EXIT_DELAY_MS = 300;
 let saveAt = 0;
 let refreshCursor = 0;
 let auxCursor = 0;
@@ -158,6 +161,57 @@ let pressureDirty = false;
 const held = new Array(32).fill(null);   /* pad index -> {chs, note} */
 const stepLit = new Array(16).fill(-1);  /* last color sent per step LED */
 const lit = new Array(32).fill(-1);      /* last color sent per pad */
+
+/* Transport state. Move's own Play / Record LED updates are suppressed while the module
+   runs (RGB sysex), so the state is tracked here and the two LEDs are driven from it.
+   null = not known yet: the LED is left to Move until a press or the host tells us. */
+const TRANSPORT_POLL_MS = 250;
+let playing = null;
+let recording = null;
+let overlayPlaying = null;       /* last transportPlaying value read from the host */
+let lastTransportPoll = 0;
+let lastTransportLed = 0;
+
+function readHostPlaying() {
+    if (typeof shadow_get_overlay_state !== 'function') return null;
+    const state = shadow_get_overlay_state();
+    return state && typeof state.transportPlaying === 'number' ? state.transportPlaying !== 0 : null;
+}
+
+function setPlaying(on) {
+    playing = on;
+    if (!on) recording = false;
+}
+
+/* Adopts the host's transport state on start and whenever it changes */
+function pollTransport() {
+    const now = Date.now();
+    if (now - lastTransportPoll < TRANSPORT_POLL_MS) return;
+    lastTransportPoll = now;
+    const hostPlaying = readHostPlaying();
+    if (hostPlaying === null || hostPlaying === overlayPlaying) return;
+    overlayPlaying = hostPlaying;
+    if (hostPlaying !== playing) setPlaying(hostPlaying);
+}
+
+function handleTransportButton(cc) {
+    if (cc === MovePlay) {
+        setPlaying(!playing);
+    } else {
+        recording = !recording;
+        /* Starting a recording from stop starts the transport too */
+        if (recording) playing = true;
+    }
+}
+
+/* Re-sent a few times per second: the cache can't see Move overwrite these */
+function updateTransportLeds(immediate) {
+    const now = Date.now();
+    if (!immediate && now - lastTransportLed < TRANSPORT_POLL_MS) return;
+    lastTransportLed = now;
+    if (playing !== null) setButtonLED(MovePlay, playing ? Green : Black, true);
+    if (recording !== null) setButtonLED(MoveRec, recording ? Red : Black, true);
+}
 
 /* Pad index -> semitone offset from the base note, or null if unused */
 function padOffset(padIndex) {
@@ -616,10 +670,21 @@ function handleCC(cc, value) {
 
     if (value === 0) return;
 
+    if (cc === MovePlay || cc === MoveRec) {
+        handleTransportButton(cc);
+        updateTransportLeds(true);
+        return;
+    }
+
     if (cc === BACK_CC) {
         exiting = true;
         shutdown();
-        if (typeof host_exit_module === 'function') host_exit_module();
+        /* On exit Schwung normally replays the LED state from before the module started,
+           which brings back a stale Play / Record LED. A native repaint request skips that
+           replay, so the hardware keeps the state shutdown() wrote. The exit is delayed so
+           the LED writes reach the hardware first (pending writes are dropped on exit) */
+        if (typeof shadow_set_skip_led_clear === 'function') shadow_set_skip_led_clear(1);
+        exitAt = Date.now() + EXIT_DELAY_MS;
         return;
     }
 
@@ -795,13 +860,26 @@ function drawUI() {
     drawKnobInfo();
 }
 
+/* Stops Move's firmware from repainting the pads with its own in-key/chromatic colors */
+function suppressMoveLeds(on) {
+    if (typeof shadow_set_overtake_suppress_sysex === 'function') {
+        shadow_set_overtake_suppress_sysex(on ? 1 : 0);
+    }
+}
+
 globalThis.init = function () {
+    suppressMoveLeds(true);
     lastAutoPoll = 0;
     lastDraw = 0;
     auxCursor = 0;
     trackSyncPending = false;
     trackReleaseCC = -1;
     trackIgnoreUntil = 0;
+    overlayPlaying = readHostPlaying();
+    playing = overlayPlaying;
+    recording = null;
+    lastTransportPoll = 0;
+    lastTransportLed = 0;
     lit.fill(-1);
     held.fill(null);
     pressure.fill(0);
@@ -811,6 +889,7 @@ globalThis.init = function () {
     channelSentMask = 0;
     stepLit.fill(-1);
     exiting = false;
+    exitAt = 0;
     shiftHeld = false;
     selItem = IT_CHANNEL;
     editing = false;
@@ -823,9 +902,11 @@ globalThis.init = function () {
 };
 
 globalThis.onResume = function () {
+    suppressMoveLeds(true);
     invalidateLedCache();
     lit.fill(-1);
     stepLit.fill(-1);
+    lastTransportLed = 0;
 };
 
 /* Safe to run twice (Back handler, then onUnload) */
@@ -839,16 +920,27 @@ function shutdown() {
         if (typeof move_midi_inject_to_move === 'function') injectTrackButton(trackReleaseCC, 0);
         trackReleaseCC = -1;
     }
+    updateTransportLeds(true);
+    suppressMoveLeds(false);
     if (saveAt) saveSettings();
 }
 
 globalThis.onUnload = shutdown;
 
 globalThis.tick = function () {
-    if (exiting) return;
+    if (exiting) {
+        if (exitAt && Date.now() >= exitAt) {
+            exitAt = 0;
+            updateTransportLeds(true);
+            if (typeof host_exit_module === 'function') host_exit_module();
+        }
+        return;
+    }
     if (saveAt && Date.now() >= saveAt) saveSettings();
     flushPressure();
     syncMoveTrack();
+    pollTransport();
+    updateTransportLeds();
     updateLeds();
     drawUI();
 };

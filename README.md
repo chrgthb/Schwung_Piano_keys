@@ -26,7 +26,7 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 | Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Channel, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved |
 | Up / Down | Octave (From shifts by 12 semitones) |
 | Menu | Output: Move / USB / Move+USB |
-| Play / Record | Handled by Move itself (start/stop, record); the button LEDs stay Move-driven |
+| Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
 | Back | Exit the module |
 | Knobs 1–8 | Send MIDI CC (default CC 71–78, value 0–127, faster turn = bigger steps) |
 | Shift + knob | Reassign that knob's CC number (0–127); nothing is sent |
@@ -37,7 +37,7 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 
 **Track selection**: if a Move track's MIDI In channel is "Auto", it plays whatever channel arrives as long as it is the *selected* track. Since the module owns the track buttons, whenever you pick channel 1–4 it presses the matching track button on Move's behalf (and retries until Move reports that track selected), so the sound follows the channel. For best results set the tracks' MIDI In to their own channel (1–4) in Move.
 
-**LEDs**: Move's own LED sysex is not suppressed, so the Play and Record button LEDs stay Move-driven and correct after leaving the module. Move may repaint the pads with its in-key/chromatic colors, so the module re-sends pad, step and track button LEDs round-robin (1–2 USB-MIDI packets per tick) to keep them correct.
+**LEDs**: the module asks Schwung to suppress Move's own LED sysex (`shadow_set_overtake_suppress_sysex`) so the firmware should stop repainting the pads in its in-key/chromatic layout, but also re-sends pad, step and track button LEDs round-robin (1–2 USB-MIDI packets per tick) as a safety net. On Back the module asks Schwung for a native LED repaint (`shadow_set_skip_led_clear`) instead of the usual replay of the pre-start LED state, writes the tracked Play / Record state and exits ~0.3 s later, so those two LEDs stay correct after leaving.
 
 Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Menu button also lets you send them to a USB-A device.
 
