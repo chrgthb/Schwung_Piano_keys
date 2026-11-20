@@ -22,8 +22,8 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 | Track buttons 1–4 | MIDI channel 1–4 (only that channel) |
 | Left / Right | Channel: Auto, 1…16 (only that channel) |
 | Step buttons 1–16 | Toggle MIDI channels 1–16; notes, aftertouch and knob CCs go to every active channel. Active steps are lit |
-| Jog turn | Moves the highlighted (inverted) label: Channel / From / Prg / Out / AT |
-| Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Channel, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved |
+| Jog turn | Moves the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT |
+| Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Preset 0–9, Ch, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved. Changing the Preset stores the current settings in the old preset and loads the new one (Ch, From, Prg, Out, AT and the knob CC numbers); no program change is sent on a preset switch, the stored Prg only applies to later changes. The label on screen is "Set:"; the channel list shows "multi" when the channel numbers do not fit |
 | Up / Down | Octave (From shifts by 12 semitones) |
 | Menu | Output: Move / USB / Move+USB |
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
@@ -41,7 +41,7 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 
 Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Menu button also lets you send them to a USB-A device.
 
-**Knob CCs**: they use the same channel and output target as the notes. The CC assignment, last knob values and pressure mode, pressure CC number and program are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
+**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments), the active preset and the last knob values are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
 
 ## Screen reader
 

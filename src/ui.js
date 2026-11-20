@@ -18,9 +18,10 @@
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
  *   Up / Down           octave (lowest note shifts by 12)
- *   Jog turn            move the highlighted (inverted) label: Channel / From / Prg / Out / AT
+ *   Jog turn            move the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT
  *   Jog click           toggle editing: the value of the highlighted label becomes active and
- *                       the jog changes it (From = lowest note, Prg = program change 0-127)
+ *                       the jog changes it (Preset = 0-9: stores the current settings and loads
+ *                       the chosen preset, no program change is sent; From = lowest note, Prg = program change 0-127)
  *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
  *   Menu                output target (Move / USB / Both)
@@ -31,7 +32,8 @@
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
  *
- * The CC assignment, last knob values, pressure mode, pressure CC and program are saved to disk and restored on start.
+ * Each of the 10 presets keeps Ch, From, Prg, Out, AT and the knob CC numbers. Presets and the
+ * last knob values are saved to disk and restored on start.
  */
 
 import {
@@ -71,6 +73,7 @@ const TRACK_MAX_TRIES = 4;
 const TRACK_IGNORE_MS = 400;     /* ignore echoes of our own injected track press */
 const AUTO_POLL_MS = 30;         /* how often Move's selected track is re-read */
 const DRAW_INTERVAL_MS = 40;     /* display redraw rate cap (25 Hz) */
+const ITEM_GAP = 3;              /* pixels between an item's label and value */
 const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
@@ -103,18 +106,21 @@ const OUT_NAMES = ['Move', 'USB', 'Move+USB'];
 const PROGRAM_STATUS = 0xC0;
 
 /* Selectable display items, in jog navigation order */
-const IT_CHANNEL = 0;
-const IT_FROM = 1;
-const IT_PROGRAM = 2;
-const IT_OUT = 3;
-const IT_AT = 4;
-const IT_COUNT = 5;
+const IT_PRESET = 0;
+const IT_CHANNEL = 1;
+const IT_FROM = 2;
+const IT_PROGRAM = 3;
+const IT_OUT = 4;
+const IT_AT = 5;
+const IT_COUNT = 6;
+const PRESET_COUNT = 10;
 const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-const ITEM_NAMES = ['Channel', 'From', 'Program', 'Output', 'Aftertouch'];
+const ITEM_NAMES = ['Preset', 'Channel', 'From', 'Program', 'Output', 'Aftertouch'];
 const OUT_SPOKEN = ['Move', 'USB', 'Move and USB'];
 const AT_SPOKEN = ['Off', 'Polyphonic', 'Channel'];
 
+let preset = 0;                  /* active preset 0..9 */
 let navChannel = 0;              /* Left/Right position: 0 = Auto, 1..16 */
 let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Auto */
 let autoMode = true;             /* follow the selected Move track */
@@ -131,6 +137,7 @@ let lastAutoPoll = 0;
 let lastDraw = 0;
 
 const knobCC = DEFAULT_KNOB_CC.slice();           /* knob -> CC number */
+const presets = [];                               /* stored settings of the inactive presets */
 const knobValue = new Array(KNOB_COUNT).fill(64); /* knob -> last sent value */
 const knobTouched = new Array(KNOB_COUNT).fill(false);
 let lastKnob = -1;
@@ -275,6 +282,7 @@ function channelSpeech() {
 
 function itemSpeech(item) {
     switch (item) {
+        case IT_PRESET: return String(preset);
         case IT_CHANNEL: return channelSpeech();
         case IT_FROM: return noteName(fromNote);
         case IT_PROGRAM: return String(program);
@@ -292,6 +300,7 @@ function selectSingleChannel(ch) {
     autoMode = ch === 0;
     channelMask = ch === 0 ? 0 : 1 << (ch - 1);
     requestTrackSync();
+    scheduleSave();
     announceItem(IT_CHANNEL);
 }
 
@@ -309,6 +318,7 @@ function toggleChannel(index) {
     }
     navChannel = index + 1;
     requestTrackSync();
+    scheduleSave();
     announce(`Channel ${index + 1} ${channelMask & (1 << index) ? 'on' : 'off'}`);
 }
 
@@ -510,21 +520,96 @@ function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
 }
 
+function defaultPreset() {
+    return {
+        autoMode: true, navChannel: 0, channelMask: 0, fromNote: BASE_NOTE, program: 0,
+        output: OUT_MOVE, pressureMode: AT_CHANNEL, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice()
+    };
+}
+
+/* Current live settings as a preset */
+function snapshotPreset() {
+    return { autoMode, navChannel, channelMask, fromNote, program, output, pressureMode, pressureCC, knobCC: knobCC.slice() };
+}
+
+/* Complete, validated preset from saved data; missing or invalid fields get defaults */
+function sanitizePreset(raw) {
+    const p = defaultPreset();
+    if (!raw || typeof raw !== 'object') return p;
+    if (Number.isInteger(raw.navChannel)) p.navChannel = clamp(raw.navChannel, 0, 16);
+    if (Number.isInteger(raw.channelMask)) p.channelMask = raw.channelMask & 0xFFFF;
+    p.autoMode = raw.autoMode === false && p.channelMask !== 0 ? false : true;
+    if (p.autoMode) {
+        p.navChannel = 0;
+        p.channelMask = 0;
+    } else if (p.navChannel === 0) {
+        p.navChannel = 32 - Math.clz32(p.channelMask & -p.channelMask);   /* lowest active channel */
+    }
+    if (Number.isInteger(raw.fromNote)) p.fromNote = clamp(raw.fromNote, FROM_MIN, FROM_MAX);
+    if (Number.isInteger(raw.program)) p.program = clamp(raw.program, 0, 127);
+    if (Number.isInteger(raw.output)) p.output = clamp(raw.output, 0, OUT_NAMES.length - 1);
+    if (Number.isInteger(raw.pressureCC)) p.pressureCC = clamp(raw.pressureCC, 1, PRESSURE_CC_MAX);
+    if (Number.isInteger(raw.pressureMode) && raw.pressureMode >= 0 && raw.pressureMode < AT_NAMES.length) {
+        p.pressureMode = raw.pressureMode;
+    }
+    for (let i = 0; i < KNOB_COUNT; i++) {
+        if (Array.isArray(raw.knobCC) && Number.isInteger(raw.knobCC[i])) {
+            p.knobCC[i] = clamp(raw.knobCC[i], 0, 127);
+        }
+    }
+    return p;
+}
+
+function applyPreset(p) {
+    autoMode = p.autoMode;
+    navChannel = p.navChannel;
+    channelMask = p.channelMask;
+    fromNote = p.fromNote;
+    program = p.program;
+    output = p.output;
+    pressureMode = p.pressureMode;
+    pressureCC = p.pressureCC;
+    for (let i = 0; i < KNOB_COUNT; i++) knobCC[i] = p.knobCC[i];
+}
+
+/* Stores the current settings in the active preset, loads another one and activates it.
+   No program change is sent: the stored program only applies to later changes */
+function switchPreset(next) {
+    if (next === preset) return;
+    releaseAll();
+    presets[preset] = snapshotPreset();
+    preset = next;
+    applyPreset(presets[preset]);
+    pressure.fill(0);
+    pressureSent.fill(0);
+    pressureDirty = false;
+    lastKnob = -1;
+    requestTrackSync();
+    scheduleSave();
+    announce(`Preset ${preset}. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
+        `Output: ${OUT_SPOKEN[output]}`);
+}
+
 function loadSettings() {
+    for (let i = 0; i < PRESET_COUNT; i++) presets[i] = defaultPreset();
+    preset = 0;
+    applyPreset(presets[0]);
     if (typeof host_read_file !== 'function') return;
     try {
         const text = host_read_file(SETTINGS_FILE);
         if (!text) return;
         const data = JSON.parse(text);
-        if (Number.isInteger(data.program)) program = clamp(data.program, 0, 127);
-        if (Number.isInteger(data.pressureCC)) pressureCC = clamp(data.pressureCC, 1, PRESSURE_CC_MAX);
-        if (Number.isInteger(data.pressure) && data.pressure >= 0 && data.pressure < AT_NAMES.length) {
-            pressureMode = data.pressure;
+        if (Array.isArray(data.presets)) {
+            for (let i = 0; i < PRESET_COUNT; i++) presets[i] = sanitizePreset(data.presets[i]);
+            if (Number.isInteger(data.preset)) preset = clamp(data.preset, 0, PRESET_COUNT - 1);
+        } else {
+            /* Settings from before presets existed become preset 0 */
+            presets[0] = sanitizePreset({
+                program: data.program, pressureMode: data.pressure, pressureCC: data.pressureCC, knobCC: data.cc
+            });
         }
+        applyPreset(presets[preset]);
         for (let i = 0; i < KNOB_COUNT; i++) {
-            if (Array.isArray(data.cc) && Number.isInteger(data.cc[i])) {
-                knobCC[i] = clamp(data.cc[i], 0, 127);
-            }
             if (Array.isArray(data.value) && Number.isInteger(data.value[i])) {
                 knobValue[i] = clamp(data.value[i], 0, 127);
             }
@@ -536,7 +621,8 @@ function saveSettings() {
     saveAt = 0;
     if (typeof host_write_file !== 'function') return;
     if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
-    host_write_file(SETTINGS_FILE, JSON.stringify({ cc: knobCC, value: knobValue, pressure: pressureMode, pressureCC, program }));
+    presets[preset] = snapshotPreset();
+    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, value: knobValue }));
 }
 
 function scheduleSave() {
@@ -598,6 +684,7 @@ function setPressure(mode, cc) {
 function setOutput(next) {
     output = next;
     requestTrackSync();
+    scheduleSave();
     announceItem(IT_OUT);
 }
 
@@ -617,11 +704,15 @@ function pressureText() {
 /* Jog turn while an item's value is active */
 function adjustSelected(delta) {
     switch (selItem) {
+        case IT_PRESET:
+            switchPreset(clamp(preset + delta, 0, PRESET_COUNT - 1));
+            break;
         case IT_CHANNEL:
             selectSingleChannel(clamp(navChannel + delta, 0, 16));
             break;
         case IT_FROM:
             fromNote = clamp(fromNote + delta, FROM_MIN, FROM_MAX);
+            scheduleSave();
             announceItem(IT_FROM);
             break;
         case IT_PROGRAM: {
@@ -650,6 +741,7 @@ function adjustSelected(delta) {
 
 function shiftOctave(octaves) {
     fromNote = clamp(fromNote + 12 * octaves, FROM_MIN, FROM_MAX);
+    scheduleSave();
     announceItem(IT_FROM);
 }
 
@@ -856,7 +948,7 @@ function drawText(x, y, text, inverted) {
 /* "label value": the label is inverted while the item is selected, the value while it is
    being edited. A negative x right-aligns the item to the screen edge. */
 function drawItem(item, x, y, label, value) {
-    const gap = 3;
+    const gap = ITEM_GAP;
     const labelW = text_width(label);
     const width = labelW + gap + text_width(value);
     const left = x < 0 ? 128 + x - width : x;
@@ -872,9 +964,16 @@ function drawUI() {
     clear_screen();
     const chs = currentChannels();
     let chText = autoMode ? `Auto (${chs[0]})` : chs.join(',');
-    if (chText.length > 12) chText = `${chs.length} selected`;
     print(2, 0, 'Piano Keys', 1);
-    drawItem(IT_CHANNEL, 2, 10, 'Channel:', chText);
+
+    /* Set on the left, Ch right-aligned with at least two characters of gap; the channel
+       list becomes "multi" when the numbers do not fit */
+    const minGap = 2 * text_width(' ');
+    const free = 126 - (2 + text_width('Set:') + ITEM_GAP + text_width(String(preset)) + minGap +
+        text_width('Ch:') + ITEM_GAP);
+    if (text_width(chText) > free) chText = 'multi';
+    drawItem(IT_PRESET, 2, 10, 'Set:', String(preset));
+    drawItem(IT_CHANNEL, -2, 10, 'Ch:', chText);
     drawItem(IT_FROM, 2, 20, 'From:', noteName(fromNote));
     drawItem(IT_PROGRAM, 70, 20, 'Prg:', String(program));
     drawItem(IT_OUT, 2, 30, 'Out:', OUT_NAMES[output]);
