@@ -73,6 +73,7 @@ const TRACK_MAX_TRIES = 4;
 const TRACK_IGNORE_MS = 400;     /* ignore echoes of our own injected track press */
 const AUTO_POLL_MS = 30;         /* how often Move's selected track is re-read */
 const DRAW_INTERVAL_MS = 40;     /* display redraw rate cap (25 Hz) */
+const RIGHT_COL_X = 64;          /* left edge of the Ch and Prg items: screen center */
 const ITEM_GAP = 3;              /* pixels between an item's label and value */
 const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
@@ -963,19 +964,18 @@ function drawUI() {
     lastDraw = now;
     clear_screen();
     const chs = currentChannels();
-    let chText = autoMode ? `Auto (${chs[0]})` : chs.join(',');
     print(2, 0, 'Piano Keys', 1);
 
-    /* Set on the left, Ch right-aligned with at least two characters of gap; the channel
-       list becomes "multi" when the numbers do not fit */
-    const minGap = 2 * text_width(' ');
-    const free = 126 - (2 + text_width('Set:') + ITEM_GAP + text_width(String(preset)) + minGap +
-        text_width('Ch:') + ITEM_GAP);
-    if (text_width(chText) > free) chText = 'multi';
+    /* Ch and Prg labels start at the screen center, so they never move. The channel list
+       becomes "multi" when the numbers do not fit next to the label */
+    const free = 126 - (RIGHT_COL_X + text_width('Ch:') + ITEM_GAP);
+    let chText = autoMode ? `Auto ${chs[0]}` : chs.join(',');
+    if (autoMode && text_width(chText) > free) chText = `A${chs[0]}`;
+    else if (text_width(chText) > free) chText = 'multi';
     drawItem(IT_PRESET, 2, 10, 'Set:', String(preset));
-    drawItem(IT_CHANNEL, -2, 10, 'Ch:', chText);
+    drawItem(IT_CHANNEL, RIGHT_COL_X, 10, 'Ch:', chText);
     drawItem(IT_FROM, 2, 20, 'From:', noteName(fromNote));
-    drawItem(IT_PROGRAM, 70, 20, 'Prg:', String(program));
+    drawItem(IT_PROGRAM, RIGHT_COL_X, 20, 'Prg:', String(program));
     drawItem(IT_OUT, 2, 30, 'Out:', OUT_NAMES[output]);
     drawItem(IT_AT, -2, 30, 'AT:', pressureText());
     drawKnobInfo();
@@ -1013,7 +1013,7 @@ globalThis.init = function () {
     exitAt = 0;
     exitSteps = [];
     shiftHeld = false;
-    selItem = IT_CHANNEL;
+    selItem = IT_PRESET;
     editing = false;
     knobTouched.fill(false);
     lastKnob = -1;
