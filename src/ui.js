@@ -138,7 +138,9 @@ let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
 let infoUntil = 0;
 let exiting = false;
 let exitAt = 0;
-const EXIT_DELAY_MS = 300;
+const EXIT_SETTLE_MS = 300;      /* wait after the last track press so Move's repaint reaches the hardware */
+const EXIT_TRACK_STEP_MS = 100;  /* spacing of the track button presses sent on exit */
+let exitSteps = [];              /* pending injected track button events {at, cc, value} */
 let saveAt = 0;
 let refreshCursor = 0;
 let auxCursor = 0;
@@ -324,6 +326,25 @@ function requestTrackSync() {
     trackSyncPending = true;
     trackSyncTries = 0;
     trackSyncAt = 0;
+}
+
+/* Move only repaints its pads and track LEDs when something changes, and the module's
+   own LEDs replaced them. Pressing every track button (the selected one last) makes Move
+   redraw them without changing the selected track */
+function beginExit() {
+    let at = Date.now();
+    if (typeof move_midi_inject_to_move === 'function') {
+        const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
+        const known = !!(info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3);
+        const selected = known ? info.selectedTrack : lastAutoChannel - 1;
+        const order = [0, 1, 2, 3].filter(t => t !== selected).concat(selected);
+        for (const t of order) {
+            const cc = MoveRow1 - t;
+            exitSteps.push({ at, cc, value: 127 }, { at: at + TRACK_PRESS_MS, cc, value: 0 });
+            at += EXIT_TRACK_STEP_MS;
+        }
+    }
+    exitAt = at + EXIT_SETTLE_MS;
 }
 
 function injectTrackButton(cc, value) {
@@ -684,7 +705,7 @@ function handleCC(cc, value) {
            replay, so the hardware keeps the state shutdown() wrote. The exit is delayed so
            the LED writes reach the hardware first (pending writes are dropped on exit) */
         if (typeof shadow_set_skip_led_clear === 'function') shadow_set_skip_led_clear(1);
-        exitAt = Date.now() + EXIT_DELAY_MS;
+        beginExit();
         return;
     }
 
@@ -697,6 +718,7 @@ function handleCC(cc, value) {
 }
 
 globalThis.onMidiMessageInternal = function (data) {
+    if (exiting) return;
     const type = data[0] & 0xF0;
 
     /* Knob touch: handled before the filters, which drop capacitive touch */
@@ -890,6 +912,7 @@ globalThis.init = function () {
     stepLit.fill(-1);
     exiting = false;
     exitAt = 0;
+    exitSteps = [];
     shiftHeld = false;
     selItem = IT_CHANNEL;
     editing = false;
@@ -929,7 +952,12 @@ globalThis.onUnload = shutdown;
 
 globalThis.tick = function () {
     if (exiting) {
-        if (exitAt && Date.now() >= exitAt) {
+        const now = Date.now();
+        while (exitSteps.length && exitSteps[0].at <= now) {
+            const step = exitSteps.shift();
+            injectTrackButton(step.cc, step.value);
+        }
+        if (exitAt && !exitSteps.length && now >= exitAt) {
             exitAt = 0;
             updateTransportLeds(true);
             if (typeof host_exit_module === 'function') host_exit_module();
