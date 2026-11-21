@@ -191,7 +191,12 @@ let exiting = false;
 let exitAt = 0;
 const EXIT_SETTLE_MS = 300;      /* wait after the last track press so Move's repaint reaches the hardware */
 const EXIT_TRACK_STEP_MS = 100;  /* spacing of the track button presses sent on exit */
-let exitSteps = [];              /* pending injected track button events {at, cc, value} */
+const LAYOUT_STEP = 24;          /* Shift + Step 9 opens Move's Keys & Scales menu (first entry: In-Key / Chromatic) */
+const LAYOUT_STEP_MS = 160;      /* spacing of the injected events of one layout toggle */
+const LAYOUT_TOGGLES = 2;        /* wheel clicks in the menu; even number ends in the original mode */
+const MOVE_SHIFT_CC = 49;
+const MOVE_WHEEL_CC = 3;
+let exitSteps = [];              /* pending injected USB-MIDI packets {at, pkt} */
 let saveAt = 0;
 let refreshCursor = 0;
 let auxCursor = 0;
@@ -395,9 +400,29 @@ function beginExit() {
         const order = [0, 1, 2, 3].filter(t => t !== selected).concat(selected);
         for (const t of order) {
             const cc = MoveRow1 - t;
-            exitSteps.push({ at, cc, value: 127 }, { at: at + TRACK_PRESS_MS, cc, value: 0 });
+            exitSteps.push({ at, pkt: [0x0B, MidiCC, cc, 127] },
+                           { at: at + TRACK_PRESS_MS, pkt: [0x0B, MidiCC, cc, 0] });
             at += EXIT_TRACK_STEP_MS;
         }
+        /* Open Move's Keys & Scales menu (Shift + Step 9), click the wheel twice on its first
+           entry (In-Key / Chromatic and back) and close the menu with Shift + Step 9 again.
+           The mode ends up unchanged but the pads that stayed dark are repainted */
+        const press = (pkts) => {
+            for (const [dt, pkt] of pkts) exitSteps.push({ at: at + dt, pkt });
+            at += LAYOUT_STEP_MS;
+        };
+        const shiftStep9 = () => {
+            press([[0, [0x0B, MidiCC, MOVE_SHIFT_CC, 127]],
+                   [TRACK_PRESS_MS, [0x09, MidiNoteOn, LAYOUT_STEP, 127]],
+                   [TRACK_PRESS_MS * 2, [0x08, MidiNoteOff, LAYOUT_STEP, 0]],
+                   [TRACK_PRESS_MS * 3, [0x0B, MidiCC, MOVE_SHIFT_CC, 0]]]);
+        };
+        shiftStep9();
+        for (let i = 0; i < LAYOUT_TOGGLES; i++) {
+            press([[0, [0x0B, MidiCC, MOVE_WHEEL_CC, 127]],
+                   [TRACK_PRESS_MS, [0x0B, MidiCC, MOVE_WHEEL_CC, 0]]]);
+        }
+        shiftStep9();
     }
     exitAt = at + EXIT_SETTLE_MS;
 }
@@ -1229,7 +1254,7 @@ globalThis.tick = function () {
         const now = Date.now();
         while (exitSteps.length && exitSteps[0].at <= now) {
             const step = exitSteps.shift();
-            injectTrackButton(step.cc, step.value);
+            move_midi_inject_to_move(step.pkt);
         }
         if (exitAt && !exitSteps.length && now >= exitAt) {
             exitAt = 0;
