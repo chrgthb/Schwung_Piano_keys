@@ -28,8 +28,10 @@
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
- *   Capture / Undo      passed through to Move (52, 56); the display shows "Capture sent" (plus the
+ *   Capture / Undo      sent to Move only (not to USB); the display shows "Capture sent" (plus the
  *                       new tempo when Move's tempo changed) or "Undo sent" for a moment
+ *   Mute                sent to Move only (not to USB)
+ *   Shift + Mute        All MIDI notes off (CC 123 on all channels) to the selected output(s)
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
@@ -92,6 +94,8 @@ const LAYOUT_COUNT = BLACK_OFFSETS.length;
 const BACK_CC = 51;
 const CAPTURE_CC = 52;
 const UNDO_CC = 56;
+const MUTE_CC = 88;
+const ALL_NOTES_OFF_CC = 123;
 const NOTICE_MS = 2500;          /* how long a "sent" message stays on screen */
 const CAPTURE_WATCH_MS = 2500;   /* after Capture, how long Move's tempo is watched for a change */
 const TEMPO_CHANGE_MIN = 0.05;   /* BPM difference counted as a changed tempo */
@@ -731,6 +735,29 @@ function formatTempo(tempo) {
     return String(Math.round(tempo * 10) / 10);
 }
 
+/* Capture / Undo / Mute are no longer passed through by the host: they are forwarded here, and
+   only when Move is an output target, so external synths never see them */
+const forwardedHeld = new Set();
+
+function forwardToMove(cc, value) {
+    if (value > 0) {
+        if (output === OUT_USB || typeof move_midi_inject_to_move !== 'function') return false;
+        forwardedHeld.add(cc);
+    } else if (!forwardedHeld.delete(cc)) {
+        return false;
+    }
+    move_midi_inject_to_move([0x0B, MidiCC, cc, value]);
+    return true;
+}
+
+/* CC 123 on all 16 channels to the selected output(s), after releasing the held pads */
+function allNotesOff() {
+    releaseAll();
+    for (let ch = 0; ch < 16; ch++) sendMidi(MidiCC | ch, ALL_NOTES_OFF_CC, 0);
+    showNotice(['All notes off']);
+    announce('All notes off');
+}
+
 function handleCapture() {
     captureBaseTempo = moveTempo();
     captureWatchUntil = Date.now() + CAPTURE_WATCH_MS;
@@ -852,6 +879,19 @@ function handleCC(cc, value) {
 
     if (cc >= MoveRow4 && cc <= MoveRow1 && Date.now() < trackIgnoreUntil) return;
 
+    if (cc === CAPTURE_CC || cc === UNDO_CC) {
+        if (!forwardToMove(cc, value) || value === 0) return;
+        if (cc === CAPTURE_CC) handleCapture();
+        else handleUndo();
+        return;
+    }
+
+    if (cc === MUTE_CC) {
+        if (value > 0 && shiftHeld) allNotesOff();
+        else forwardToMove(cc, value);
+        return;
+    }
+
     if (value === 0) return;
 
     if (cc === MovePlay || cc === MoveRec) {
@@ -877,8 +917,6 @@ function handleCC(cc, value) {
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
     else if (cc === MoveMenu) setBlackLayout((blackLayout + 1) % LAYOUT_COUNT);
-    else if (cc === CAPTURE_CC) handleCapture();
-    else if (cc === UNDO_CC) handleUndo();
     else if (cc >= MoveRow4 && cc <= MoveRow1) selectSingleChannel(MoveRow1 - cc + 1);
 }
 
@@ -1080,6 +1118,7 @@ globalThis.init = function () {
     lastTransportLed = 0;
     noticeUntil = 0;
     captureWatchUntil = 0;
+    forwardedHeld.clear();
     lit.fill(-1);
     held.fill(null);
     pressure.fill(0);

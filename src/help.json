@@ -124,9 +124,14 @@
         " under Move control",
         "",
         "Capture/Undo go to",
-        " Move; the screen",
+        " Move only (not USB);",
+        " the screen",
         " shows Capture sent",
-        " (+tempo) / Undo sent"
+        " (+tempo) / Undo sent",
+        "",
+        "Mute goes to Move",
+        " only; Shift + Mute",
+        " = all notes off"
       ]
     }
   ]

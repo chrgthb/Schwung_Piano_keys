@@ -34,8 +34,10 @@ White row:  C   D    E   F   G   A    B   C         C   D   E    F   G   A   B  
 | Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Preset 0–9, Ch, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved. Changing the Preset stores the current settings in the old preset and loads the new one (Ch, From, Prg, Out, AT and the knob CC numbers); no program change is sent on a preset switch, the stored Prg only applies to later changes. The label on screen is "Set:"; the channel list shows "multi" when the channel numbers do not fit |
 | Up / Down | Octave (From shifts by 12 semitones) |
 | Menu | Toggles the black key layout: C# on the first pad (1, default) or on the second pad (2). The display shows "Black keys: C# on pad 1/2". The output target (Move / USB / Move+USB) is changed with the jog (Out) |
-| Capture | Passed through to Move (module.json `button_passthrough` 52). The display shows "Capture sent"; if Move's set tempo changes within ~2.5 s, "Tempo 123" is shown too. Move does not report to the module whether the capture worked or which tempo it detected, so the shown tempo is the set tempo read with `host_get_move_info()` |
-| Undo | Passed through to Move (`button_passthrough` 56). The display shows "Undo sent" |
+| Capture | Sent to Move only when Move is an output target (Out = Move or Move+USB); never to USB, so external synths are unaffected. The display shows "Capture sent"; if Move's set tempo changes within ~2.5 s, "Tempo 123" is shown too. Move does not report to the module whether the capture worked or which tempo it detected, so the shown tempo is the set tempo read with `host_get_move_info()` |
+| Undo | Sent to Move only when Move is an output target, like Capture. The display shows "Undo sent" |
+| Mute | Sent to Move only when Move is an output target, like Capture |
+| Shift + Mute | All MIDI notes off: releases the held pads and sends CC 123 on all 16 channels to the selected output(s). The display shows "All notes off" |
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
 | Back | Exit the module |
 | Knobs 1–8 | Send MIDI CC (default CC 71–78, value 0–127, faster turn = bigger steps) |
