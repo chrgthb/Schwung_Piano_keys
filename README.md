@@ -31,6 +31,7 @@ White row:  C   D    E   F   G   A    B   C         C   D   E    F   G   A   B  
 | Left / Right | Channel: Auto, 1…16 (only that channel) |
 | Step buttons 1–16 | Toggle MIDI channels 1–16; notes, aftertouch and knob CCs go to every active channel. Active steps are lit |
 | Jog turn | Moves the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT |
+| [Help] (top right) | Selectable with the jog turn (Set stays the initial selection). Jog click opens a short list of the buttons that cannot be changed on the main screen; the jog scrolls it line by line, the bottom line always reads "Click: exit" (jog click or Back closes it) |
 | Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Preset 0–9, Ch, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved. Changing the Preset stores the current settings in the old preset and loads the new one (Ch, From, Prg, Out, AT and the knob CC numbers); no program change is sent on a preset switch, the stored Prg only applies to later changes. The label on screen is "Set:"; the channel list shows "multi" when the channel numbers do not fit |
 | Up / Down | Octave (From shifts by 12 semitones) |
 | Menu | Toggles the black key layout: C# on the first pad (1, default) or on the second pad (2). The display shows "Black keys: C# on pad 1/2". The output target (Move / USB / Move+USB) is changed with the jog (Out) |

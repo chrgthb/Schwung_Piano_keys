@@ -19,6 +19,8 @@
  *                       notes, aftertouch and knob CCs. Active steps are lit.
  *   Up / Down           octave (lowest note shifts by 12)
  *   Jog turn            move the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT
+ *   [Help] (top right)  selectable with the jog; click opens a short button list, the jog scrolls it
+ *                       line by line, click (or Back) closes it
  *   Jog click           toggle editing: the value of the highlighted label becomes active and
  *                       the jog changes it (Preset = 0-9: stores the current settings and loads
  *                       the chosen preset, no program change is sent; From = lowest note, Prg = program change 0-127)
@@ -130,11 +132,28 @@ const IT_FROM = 2;
 const IT_PROGRAM = 3;
 const IT_OUT = 4;
 const IT_AT = 5;
-const IT_COUNT = 6;
+const IT_HELP = 6;
+const NAV_ORDER = [IT_HELP, IT_PRESET, IT_CHANNEL, IT_FROM, IT_PROGRAM, IT_OUT, IT_AT];
+/* Buttons whose function cannot be changed on the jog-selectable main screen */
+const HELP_LINES = [
+    'Up/Down: octave',
+    'Left/Right: channel',
+    'Tracks 1-4: channel',
+    'Steps 1-16: multi Ch',
+    'Menu: black layout',
+    'Knobs 1-8: send CC',
+    'Shift+knob: set CC',
+    'Mute: to Move',
+    'Capture/Undo: to Move',
+    'Shift+Mute: panic',
+    'Play/Rec: to Move',
+    'Back: exit module'
+];
+const HELP_VISIBLE = 4;
 const PRESET_COUNT = 10;
 const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-const ITEM_NAMES = ['Preset', 'Channel', 'From', 'Program', 'Output', 'Aftertouch'];
+const ITEM_NAMES = ['Preset', 'Channel', 'From', 'Program', 'Output', 'Aftertouch', 'Help'];
 const OUT_SPOKEN = ['Move', 'USB', 'Move and USB'];
 const AT_SPOKEN = ['Off', 'Polyphonic', 'Channel'];
 
@@ -145,6 +164,8 @@ let autoMode = true;             /* follow the selected Move track */
 let fromNote = BASE_NOTE;        /* note of the lowest C key */
 let program = 0;                 /* last program change value sent */
 let selItem = IT_CHANNEL;        /* highlighted item */
+let helpOpen = false;            /* help screen shown instead of the main screen */
+let helpTop = 0;                 /* first visible help line */
 let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
 let blackLayout = 0;             /* index into BLACK_OFFSETS; global, not part of a preset */
@@ -310,6 +331,7 @@ function itemSpeech(item) {
         case IT_FROM: return noteName(fromNote);
         case IT_PROGRAM: return String(program);
         case IT_OUT: return OUT_SPOKEN[output];
+        case IT_HELP: return 'press to open';
         default: return pressureMode === AT_CC ? `CC ${pressureCC}` : AT_SPOKEN[pressureMode];
     }
 }
@@ -853,9 +875,20 @@ function handleCC(cc, value) {
        Shift + jog click belongs to Schwung (exit) */
     if (cc === MoveMainButton) {
         if (value > 0 && !shiftHeld) {
-            editing = !editing;
-            if (editing) announce(`Editing ${ITEM_NAMES[selItem]}`);
-            else announceItem(selItem);
+            if (helpOpen) {
+                helpOpen = false;
+                announce('Help closed');
+            } else if (selItem === IT_HELP) {
+                helpOpen = true;
+                helpTop = 0;
+                announce(`Help. ${HELP_LINES[0]}`);
+            } else if (!editing) {
+                editing = true;
+                announce(`Editing ${ITEM_NAMES[selItem]}`);
+            } else {
+                editing = false;
+                announceItem(selItem);
+            }
         }
         return;
     }
@@ -863,10 +896,14 @@ function handleCC(cc, value) {
     if (cc === MoveMainKnob) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        if (editing) {
+        if (helpOpen) {
+            helpTop = clamp(helpTop + delta, 0, HELP_LINES.length - HELP_VISIBLE);
+            announce(HELP_LINES[helpTop]);
+        } else if (editing) {
             adjustSelected(delta);
         } else {
-            selItem = clamp(selItem + delta, 0, IT_COUNT - 1);
+            const pos = clamp(NAV_ORDER.indexOf(selItem) + delta, 0, NAV_ORDER.length - 1);
+            selItem = NAV_ORDER[pos];
             announceItem(selItem);
         }
         return;
@@ -897,6 +934,11 @@ function handleCC(cc, value) {
     if (cc === MovePlay || cc === MoveRec) {
         handleTransportButton(cc);
         updateTransportLeds(true);
+        return;
+    }
+
+    if (cc === BACK_CC && helpOpen) {
+        helpOpen = false;
         return;
     }
 
@@ -1073,13 +1115,26 @@ function drawItem(item, x, y, label, value) {
     drawText(left + labelW + gap, y, value, selected && editing);
 }
 
+function drawHelp() {
+    print(2, 0, '[HELP]', 1);
+    const range = `${helpTop + 1}-${helpTop + HELP_VISIBLE}/${HELP_LINES.length}`;
+    print(126 - text_width(range), 0, range, 1);
+    for (let i = 0; i < HELP_VISIBLE; i++) print(2, 10 + i * 10, HELP_LINES[helpTop + i], 1);
+    print(2, 54, 'Click: exit', 1);
+}
+
 function drawUI() {
     const now = Date.now();
     if (now - lastDraw < DRAW_INTERVAL_MS) return;
     lastDraw = now;
     clear_screen();
+    if (helpOpen) {
+        drawHelp();
+        return;
+    }
     const chs = currentChannels();
     print(2, 0, 'Piano Keys', 1);
+    drawText(126 - text_width('[Help]'), 0, '[Help]', selItem === IT_HELP);
 
     /* Ch and Prg labels start at the screen center, so they never move. The channel list
        becomes "multi" when the numbers do not fit next to the label */
@@ -1133,6 +1188,8 @@ globalThis.init = function () {
     shiftHeld = false;
     selItem = IT_PRESET;
     editing = false;
+    helpOpen = false;
+    helpTop = 0;
     knobTouched.fill(false);
     lastKnob = -1;
     loadSettings();
