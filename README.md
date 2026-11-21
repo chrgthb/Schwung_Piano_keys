@@ -61,6 +61,10 @@ After installing, restart Schwung and pick "Piano Keys" from the overtake module
 You can install this module from Schwung's web UI with Install Custom Module on the bottom of the Module screen.
 
 
+## License
+
+[MIT](LICENSE)
+
 ## Info
 
 Developed with help of an AI, testing in progress (by human)...
