@@ -15,6 +15,14 @@ Row 1  C   D    E   F   G   A    B   C      (white)            lower octave
 
 Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 
+The **Menu** button switches the black key layout (saved, applies to all presets):
+
+```
+Layout 1 (default)                         Layout 2 (C# on the second pad, like a piano)
+Black row:  C#  D#   –   F#  G#  A#   –   C#        –   C#  D#   –   F#  G#  A#   –
+White row:  C   D    E   F   G   A    B   C         C   D   E    F   G   A   B    C
+```
+
 ## Controls
 
 | Control | Function |
@@ -25,7 +33,9 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 | Jog turn | Moves the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT |
 | Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Preset 0–9, Ch, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved. Changing the Preset stores the current settings in the old preset and loads the new one (Ch, From, Prg, Out, AT and the knob CC numbers); no program change is sent on a preset switch, the stored Prg only applies to later changes. The label on screen is "Set:"; the channel list shows "multi" when the channel numbers do not fit |
 | Up / Down | Octave (From shifts by 12 semitones) |
-| Menu | Output: Move / USB / Move+USB |
+| Menu | Toggles the black key layout: C# on the first pad (1, default) or on the second pad (2). The display shows "Black keys: C# on pad 1/2". The output target (Move / USB / Move+USB) is changed with the jog (Out) |
+| Capture | Passed through to Move (module.json `button_passthrough` 52). The display shows "Capture sent"; if Move's set tempo changes within ~2.5 s, "Tempo 123" is shown too. Move does not report to the module whether the capture worked or which tempo it detected, so the shown tempo is the set tempo read with `host_get_move_info()` |
+| Undo | Passed through to Move (`button_passthrough` 56). The display shows "Undo sent" |
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
 | Back | Exit the module |
 | Knobs 1–8 | Send MIDI CC (default CC 71–78, value 0–127, faster turn = bigger steps) |
@@ -39,13 +49,13 @@ Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
 
 **LEDs**: the module asks Schwung to suppress Move's own LED sysex (`shadow_set_overtake_suppress_sysex`) so the firmware should stop repainting the pads in its in-key/chromatic layout, but also re-sends pad, step and track button LEDs round-robin (1–2 USB-MIDI packets per tick) as a safety net. On Back the module asks Schwung for a native LED repaint (`shadow_set_skip_led_clear`) instead of the usual replay of the pre-start LED state, writes the tracked Play / Record state, then presses the four track buttons on Move's behalf (the selected track last, so the selection does not change) to make Move redraw its pads and track LEDs, and exits ~0.3 s later.
 
-Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Menu button also lets you send them to a USB-A device.
+Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Out setting (jog) also lets you send them to a USB-A device.
 
-**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments), the active preset and the last knob values are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
+**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments), the active preset, the black key layout and the last knob values are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
 
 ## Screen reader
 
-When Schwung's screen reader (TTS) is on, the module announces its state: on start (channel, lowest note, output), on every jog selection and edit, channel and step toggles, octave, output, and knob touch or turn (knob, CC number, value). Pad notes are not announced.
+When Schwung's screen reader (TTS) is on, the module announces its state: on start (channel, lowest note, output), on every jog selection and edit, channel and step toggles, octave, output, black key layout, Capture / Undo and knob touch or turn (knob, CC number, value). Pad notes are not announced.
 
 ## Installation
 

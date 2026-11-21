@@ -24,10 +24,12 @@
  *                       the chosen preset, no program change is sent; From = lowest note, Prg = program change 0-127)
  *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
- *   Menu                output target (Move / USB / Both)
+ *   Menu                black key layout: C# above the first pad (1) or on the second pad (2)
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
+ *   Capture / Undo      passed through to Move (52, 56); the display shows "Capture sent" (plus the
+ *                       new tempo when Move's tempo changed) or "Undo sent" for a moment
  *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
  *   Shift + knob        reassign the knob's CC number (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
@@ -79,9 +81,20 @@ const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
 const WHITE_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
-const BLACK_OFFSETS = [1, 3, null, 6, 8, 10, null, 13];
+/* Black key layouts: 0 = C# on the first pad of the row, 1 = C# on the second pad,
+   so the black keys sit between the white keys like on a piano */
+const BLACK_OFFSETS = [
+    [1, 3, null, 6, 8, 10, null, 13],
+    [null, 1, 3, null, 6, 8, 10, null]
+];
+const LAYOUT_COUNT = BLACK_OFFSETS.length;
 
 const BACK_CC = 51;
+const CAPTURE_CC = 52;
+const UNDO_CC = 56;
+const NOTICE_MS = 2500;          /* how long a "sent" message stays on screen */
+const CAPTURE_WATCH_MS = 2500;   /* after Capture, how long Move's tempo is watched for a change */
+const TEMPO_CHANGE_MIN = 0.05;   /* BPM difference counted as a changed tempo */
 const KNOB_COUNT = 8;
 const KNOB_CC_FIRST = 71;        /* MoveKnob1..MoveKnob8 = CC 71..78 */
 const KNOB_TOUCH_FIRST = 0;      /* knob touch = notes 0..7 */
@@ -130,6 +143,11 @@ let program = 0;                 /* last program change value sent */
 let selItem = IT_CHANNEL;        /* highlighted item */
 let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
+let blackLayout = 0;             /* index into BLACK_OFFSETS; global, not part of a preset */
+let noticeLines = [];            /* message shown in place of the knob info */
+let noticeUntil = 0;
+let captureWatchUntil = 0;
+let captureBaseTempo = 0;
 let pressureMode = AT_CHANNEL;
 let pressureCC = 1;              /* CC number used in AT_CC mode, 1..127 */
 let shiftHeld = false;
@@ -227,7 +245,7 @@ function updateTransportLeds(immediate) {
 function padOffset(padIndex) {
     const row = padIndex >> 3;
     const col = padIndex & 7;
-    const table = (row & 1) ? BLACK_OFFSETS : WHITE_OFFSETS;
+    const table = (row & 1) ? BLACK_OFFSETS[blackLayout] : WHITE_OFFSETS;
     const rel = table[col];
     return rel === null ? null : rel + 12 * (row >> 1);
 }
@@ -594,6 +612,7 @@ function switchPreset(next) {
 function loadSettings() {
     for (let i = 0; i < PRESET_COUNT; i++) presets[i] = defaultPreset();
     preset = 0;
+    blackLayout = 0;
     applyPreset(presets[0]);
     if (typeof host_read_file !== 'function') return;
     try {
@@ -610,6 +629,7 @@ function loadSettings() {
             });
         }
         applyPreset(presets[preset]);
+        if (Number.isInteger(data.blackLayout)) blackLayout = clamp(data.blackLayout, 0, LAYOUT_COUNT - 1);
         for (let i = 0; i < KNOB_COUNT; i++) {
             if (Array.isArray(data.value) && Number.isInteger(data.value[i])) {
                 knobValue[i] = clamp(data.value[i], 0, 127);
@@ -623,7 +643,7 @@ function saveSettings() {
     if (typeof host_write_file !== 'function') return;
     if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
     presets[preset] = snapshotPreset();
-    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, value: knobValue }));
+    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, value: knobValue, blackLayout }));
 }
 
 function scheduleSave() {
@@ -687,6 +707,56 @@ function setOutput(next) {
     requestTrackSync();
     scheduleSave();
     announceItem(IT_OUT);
+}
+
+function setBlackLayout(next) {
+    releaseAll();
+    blackLayout = next;
+    scheduleSave();
+    showNotice(['Black keys:', `C# on pad ${blackLayout + 1}`]);
+    announce(`Black keys: C sharp on pad ${blackLayout + 1}`);
+}
+
+function showNotice(lines, ms) {
+    noticeLines = lines;
+    noticeUntil = Date.now() + (ms || NOTICE_MS);
+}
+
+function moveTempo() {
+    const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
+    return info && info.valid && info.tempo > 0 ? info.tempo : 0;
+}
+
+function formatTempo(tempo) {
+    return String(Math.round(tempo * 10) / 10);
+}
+
+function handleCapture() {
+    captureBaseTempo = moveTempo();
+    captureWatchUntil = Date.now() + CAPTURE_WATCH_MS;
+    showNotice(['Capture sent'], CAPTURE_WATCH_MS);
+    announce('Capture sent');
+}
+
+function handleUndo() {
+    captureWatchUntil = 0;
+    showNotice(['Undo sent']);
+    announce('Undo sent');
+}
+
+/* Move does not report whether a capture worked; a changed set tempo is the only visible result */
+function pollCapture() {
+    if (!captureWatchUntil) return;
+    const now = Date.now();
+    if (now >= captureWatchUntil) {
+        captureWatchUntil = 0;
+        return;
+    }
+    const tempo = moveTempo();
+    if (captureBaseTempo <= 0 || tempo <= 0 || Math.abs(tempo - captureBaseTempo) < TEMPO_CHANGE_MIN) return;
+    captureWatchUntil = 0;
+    showNotice(['Capture sent', `Tempo ${formatTempo(tempo)}`]);
+    announce(`Tempo ${formatTempo(tempo)}`);
 }
 
 function sendProgramChange(value) {
@@ -806,7 +876,9 @@ function handleCC(cc, value) {
     else if (cc === MoveDown) shiftOctave(-1);
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
-    else if (cc === MoveMenu) setOutput((output + 1) % OUT_NAMES.length);
+    else if (cc === MoveMenu) setBlackLayout((blackLayout + 1) % LAYOUT_COUNT);
+    else if (cc === CAPTURE_CC) handleCapture();
+    else if (cc === UNDO_CC) handleUndo();
     else if (cc >= MoveRow4 && cc <= MoveRow1) selectSingleChannel(MoveRow1 - cc + 1);
 }
 
@@ -925,6 +997,11 @@ function drawKnobCCList() {
 }
 
 function drawKnobInfo() {
+    if (Date.now() < noticeUntil) {
+        print(2, 40, noticeLines[0], 1);
+        if (noticeLines[1]) print(2, 50, noticeLines[1], 1);
+        return;
+    }
     const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
     if (!active) {
         drawKnobCCList();
@@ -1001,6 +1078,8 @@ globalThis.init = function () {
     recording = null;
     lastTransportPoll = 0;
     lastTransportLed = 0;
+    noticeUntil = 0;
+    captureWatchUntil = 0;
     lit.fill(-1);
     held.fill(null);
     pressure.fill(0);
@@ -1067,6 +1146,7 @@ globalThis.tick = function () {
     flushPressure();
     syncMoveTrack();
     pollTransport();
+    pollCapture();
     updateTransportLeds();
     updateLeds();
     drawUI();

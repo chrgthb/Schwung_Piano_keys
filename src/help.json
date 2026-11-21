@@ -54,7 +54,10 @@
         "Up/Down: octave",
         " (From moves by 12)",
         "",
-        "Menu: output",
+        "Menu: black keys",
+        " C# on pad 1 or 2",
+        "",
+        "Out (jog): output",
         " Move / USB /",
         " Move+USB",
         "",
@@ -118,7 +121,12 @@
         " touch + jog click",
         "",
         "Play/Record stay",
-        " under Move control"
+        " under Move control",
+        "",
+        "Capture/Undo go to",
+        " Move; the screen",
+        " shows Capture sent",
+        " (+tempo) / Undo sent"
       ]
     }
   ]
