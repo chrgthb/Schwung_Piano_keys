@@ -17,6 +17,8 @@
  *   Left / Right        channel (Auto, 1..16) (only that channel)
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
+ *                       A note-on arriving on the external MIDI input flashes the step of its
+ *                       channel green (bright on an active step, dim on an inactive one).
  *   Up / Down           octave (lowest note shifts by 12)
  *   Jog turn            move the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT
  *   [Help] (top right)  selectable with the jog; click opens a short button list, the jog scrolls it
@@ -60,6 +62,9 @@ import { announce } from '/data/UserData/schwung/shared/screen_reader.mjs';
 const WHITE_KEY_COLOR = White;
 const BLACK_KEY_COLOR = 26;      /* palette #FF2BD4 (magenta) */
 const PRESSED_COLOR = 126;       /* palette #00FF00 (green) */
+const MIDI_IN_FLASH_ACTIVE = 126;   /* step LED flash on incoming notes: bright green on an active channel */
+const MIDI_IN_FLASH_IDLE = 89;      /* palette #276622 (dim green) on an inactive channel */
+const MIDI_IN_FLASH_MS = 100;
 
 const FIRST_PAD = MovePads[0];
 const FIRST_STEP = 16;           /* step buttons 1-16 = notes 16..31 */
@@ -198,6 +203,7 @@ let exitSteps = [];              /* pending injected USB-MIDI packets {at, pkt} 
 let saveAt = 0;
 let refreshCursor = 0;
 let auxCursor = 0;
+const midiInFlashUntil = new Array(16).fill(0);   /* channel 0-15 -> end of its step LED flash */
 let trackSyncPending = false;
 let forcedTrack = 0;             /* track 1-4 just picked with its button while in Auto; 0 = none */
 let trackSyncTries = 0;
@@ -1029,11 +1035,18 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 };
 
-/* External MIDI is not used by this module */
-globalThis.onMidiMessageExternal = function () {};
+/* Incoming external MIDI: a note-on flashes the step LED of its channel */
+globalThis.onMidiMessageExternal = function (data) {
+    if (exiting) return;
+    if ((data[0] & 0xF0) === MidiNoteOn && data[2] > 0) {
+        midiInFlashUntil[data[0] & 0x0F] = Date.now() + MIDI_IN_FLASH_MS;
+    }
+};
 
-function stepColor(active, i) {
-    return active & (1 << i) ? White : Black;
+function stepColor(active, i, now) {
+    const on = active & (1 << i);
+    if (now < midiInFlashUntil[i]) return on ? MIDI_IN_FLASH_ACTIVE : MIDI_IN_FLASH_IDLE;
+    return on ? White : Black;
 }
 
 function trackColor(active, cc) {
@@ -1061,8 +1074,9 @@ function updateLeds() {
     }
 
     const active = activeMask();
+    const now = Date.now();
     for (let i = 0; i < 16; i++) {
-        const color = stepColor(active, i);
+        const color = stepColor(active, i, now);
         if (stepLit[i] !== color) {
             setLED(FIRST_STEP + i, color, true);
             stepLit[i] = color;
@@ -1073,7 +1087,7 @@ function updateLeds() {
 
     /* Step and track button LEDs are re-sent too: the cache can't see Move overwrite them */
     if (auxCursor < 16) {
-        const color = stepColor(active, auxCursor);
+        const color = stepColor(active, auxCursor, now);
         setLED(FIRST_STEP + auxCursor, color, true);
         stepLit[auxCursor] = color;
     } else {
@@ -1190,6 +1204,7 @@ globalThis.init = function () {
     lastAutoPoll = 0;
     lastDraw = 0;
     auxCursor = 0;
+    midiInFlashUntil.fill(0);
     trackSyncPending = false;
     forcedTrack = 0;
     trackReleaseCC = -1;
