@@ -41,7 +41,7 @@ White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B  
 | Mute | Sent to Move only when Move is an output target, like Capture |
 | Shift + Mute | All MIDI notes off: releases the held pads and sends CC 123 on all 16 channels to the selected output(s). The display shows "All notes off" |
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
-| X (Delete) | Resets the active Set to the defaults: name cleared, Ch = Auto, From, Prg, Out, AT and the knob CC numbers back to their defaults (the other Sets are untouched). The first press only opens a confirmation on the screen ("Reset Set …? X again: reset"); a second X press does the reset. Back, a jog turn or a jog click cancels. The screen reader announces the question, the result and the cancellation |
+| Shift + X (Delete) | Resets the active Set to the defaults: name cleared, Ch = Auto, From, Prg, Out, AT and the knob CC numbers back to their defaults (the other Sets are untouched). The first press only opens a confirmation on the screen ("Reset Set …? Shift+X again: reset"); a second Shift + X press does the reset. Back, a jog turn or a jog click cancels. X without Shift does nothing for now. The screen reader announces the question, the result and the cancellation |
 | Back | Exit the module |
 | Knobs 1–8 | Send MIDI CC of the active bank (default CC 71–78 in bank L, CC 79–86 in bank R; value 0–127, faster turn = bigger steps; each bank keeps its own values) |
 | Shift + knob | Reassign that knob's CC number in the active bank (0–127); nothing is sent |

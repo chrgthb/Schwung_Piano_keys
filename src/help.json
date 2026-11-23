@@ -146,11 +146,12 @@
         " only; Shift + Mute",
         " = all notes off",
         "",
-        "X (Delete): reset",
-        " the Set (name and",
-        " values) to default.",
-        " Asks first: press",
-        " X again to confirm,",
+        "Shift + X (Delete):",
+        " reset the Set (name",
+        " and values) to the",
+        " default. Asks first:",
+        " press Shift + X",
+        " again to confirm,",
         " Back/jog cancels"
       ]
     }

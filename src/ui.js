@@ -33,9 +33,9 @@
  *                       keyboard (the first 5 characters are shown after "Set:")
  *   Menu                black key layout: C# on the second pad (2, default) or on the first pad (1,
  *                       one more black key fits)
- *   Delete (X)          reset the active Set (name and values) to the defaults: the first press
- *                       shows a confirmation on the screen, a second Delete press resets,
- *                       Back / jog cancels
+ *   Shift + Delete (X)  reset the active Set (name and values) to the defaults: the first press
+ *                       shows a confirmation on the screen, a second Shift + Delete press resets,
+ *                       Back / jog cancels. Delete alone is not used yet
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
@@ -164,7 +164,7 @@ const HELP_LINES = [
     'Mute: to Move',
     'Capture/Undo: to Move',
     'Shift+Mute: panic',
-    'X: reset Set (ask)',
+    'Shift+X: reset Set',
     'Play/Rec: to Move',
     'Back: exit module'
 ];
@@ -191,7 +191,7 @@ let helpTop = 0;                 /* first visible help line */
 let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
 let blackLayout = DEFAULT_BLACK_LAYOUT;             /* index into BLACK_OFFSETS; global, not part of a preset */
-let resetPending = false;        /* Delete pressed once: waiting for the confirming second press */
+let resetPending = false;        /* Shift + Delete pressed once: waiting for the confirming second press */
 let noticeLines = [];            /* message shown in place of the knob info */
 let noticeUntil = 0;
 let captureWatchUntil = 0;
@@ -711,7 +711,7 @@ function renamePreset() {
 function askResetPreset() {
     resetPending = true;
     editing = false;
-    announce(`Reset Set ${presetSpeech()} to defaults? Press Delete again to confirm, Back to cancel`);
+    announce(`Reset Set ${presetSpeech()} to defaults? Press Shift plus Delete again to confirm, Back to cancel`);
 }
 
 function cancelResetPreset() {
@@ -1086,7 +1086,7 @@ function handleCC(cc, value) {
     }
 
     if (cc === MoveDelete) {
-        if (helpOpen) return;
+        if (!shiftHeld || helpOpen) return;
         if (resetPending) resetPreset();
         else askResetPreset();
         return;
@@ -1304,7 +1304,7 @@ function drawResetConfirm() {
     print(2, 0, `Reset Set ${presetLabel(false)}?`, 1);
     print(2, 14, 'Name and values go', 1);
     print(2, 24, 'back to defaults.', 1);
-    print(2, 40, 'X again: reset', 1);
+    print(2, 40, 'Shift+X again: reset', 1);
     print(2, 52, 'Back/jog: cancel', 1);
 }
 
