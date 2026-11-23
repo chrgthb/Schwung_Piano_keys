@@ -11,6 +11,8 @@
  * Notes are sent on one or more chosen MIDI channels (or the channel of the track
  * that was selected on Move when the module was started) to Move's own tracks
  * (cable-2 injection), to the USB-A port, or to both.
+ * On start the selected track's button is pressed on Move's behalf, so Move leaves
+ * Session mode and enters Note mode on that track.
  *
  * Controls:
  *   Track buttons 1-4   select that Move track; the channel stays on Auto and follows it
@@ -485,6 +487,17 @@ function beginExit() {
 
 function injectTrackButton(cc, value) {
     move_midi_inject_to_move([0x0B, MidiCC, cc, value]);
+}
+
+/* Pressing the selected track's button on Move's behalf takes Move from Session mode to
+   Note mode on that track (and changes nothing when it is already in Note mode) */
+function enterNoteMode() {
+    if (typeof move_midi_inject_to_move !== 'function') return;
+    const cc = MoveRow1 - (autoChannel() - 1);
+    injectTrackButton(cc, 127);
+    trackReleaseCC = cc;
+    trackReleaseAt = Date.now() + TRACK_PRESS_MS;
+    trackIgnoreUntil = trackReleaseAt + TRACK_IGNORE_MS;
 }
 
 /* Select the target track on Move itself by injecting a track button press, retried
@@ -1469,6 +1482,7 @@ globalThis.init = function () {
     lastKnob = -1;
     knobBank = 0;
     autoChannel();
+    enterNoteMode();
     announce(`Piano Keys. ${ITEM_NAMES[IT_CHANNEL]}: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
         `Output: ${OUT_SPOKEN[output]}`);
 };
