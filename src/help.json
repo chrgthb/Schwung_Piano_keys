@@ -45,7 +45,14 @@
         " 0-127, sent on",
         " every change",
         "Out: output target",
-        "AT: pressure mode"
+        "AT: pressure mode",
+        "",
+        "Set: 0-9. While its",
+        " value is active,",
+        " Shift+Jog click",
+        " names the Set (the",
+        " first 5 characters",
+        " are shown)"
       ]
     },
     {

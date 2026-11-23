@@ -28,6 +28,8 @@
  *                       the chosen preset, no program change is sent; From = lowest note, Prg = program change 0-127)
  *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
+ *   Shift + Jog click   with the Set item highlighted: rename the Set with Schwung's on-screen
+ *                       keyboard (the first 5 characters are shown after "Set:")
  *   Menu                black key layout: C# on the second pad (2, default) or on the first pad (1,
  *                       one more black key fits)
  *   Back                exit the module
@@ -58,6 +60,10 @@ import {
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
 import { announce } from '/data/UserData/schwung/shared/screen_reader.mjs';
+
+import {
+    openTextEntry, closeTextEntry, isTextEntryActive, handleTextEntryMidi, tickTextEntry, drawTextEntry
+} from '/data/UserData/schwung/shared/text_entry.mjs';
 
 const WHITE_KEY_COLOR = White;
 const BLACK_KEY_COLOR = 26;      /* palette #FF2BD4 (magenta) */
@@ -158,6 +164,9 @@ const HELP_LINES = [
 ];
 const HELP_VISIBLE = 4;
 const PRESET_COUNT = 10;
+const NAME_SHOWN = 5;            /* characters of a Set name that fit after "Set:" */
+const NAME_MAX = 16;             /* characters kept of a typed Set name */
+const NAME_SHOW_MS = 1000;       /* how long the full Set name replaces Ch: after a Set change or rename */
 const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const ITEM_NAMES = ['Preset', 'Channel', 'From', 'Program', 'Output', 'Aftertouch', 'Help'];
@@ -186,9 +195,11 @@ let shiftHeld = false;
 let lastAutoChannel = 1;
 let lastAutoPoll = 0;
 let lastDraw = 0;
+let nameShowUntil = 0;           /* until then the full Set name is drawn in place of the Ch item */
 
 const knobCC = DEFAULT_KNOB_CC.slice();           /* knob -> CC number */
 const presets = [];                               /* stored settings of the inactive presets */
+const presetNames = new Array(PRESET_COUNT).fill('');   /* preset -> Set name; '' = unnamed */
 const knobValue = new Array(KNOB_COUNT).fill(64); /* knob -> last sent value */
 const knobTouched = new Array(KNOB_COUNT).fill(false);
 let lastKnob = -1;
@@ -337,7 +348,7 @@ function channelSpeech() {
 
 function itemSpeech(item) {
     switch (item) {
-        case IT_PRESET: return String(preset);
+        case IT_PRESET: return presetSpeech();
         case IT_CHANNEL: return channelSpeech();
         case IT_FROM: return noteName(fromNote);
         case IT_PROGRAM: return String(program);
@@ -650,6 +661,45 @@ function applyPreset(p) {
     for (let i = 0; i < KNOB_COUNT; i++) knobCC[i] = p.knobCC[i];
 }
 
+function cleanName(raw) {
+    return typeof raw === 'string' ? raw.trim().slice(0, NAME_MAX) : '';
+}
+
+/* Value shown after "Set:": the first characters of the name, or the preset number */
+function presetLabel(full) {
+    if (!presetNames[preset]) return String(preset);
+    return full ? presetNames[preset] : presetNames[preset].slice(0, NAME_SHOWN);
+}
+
+function showFullName() {
+    if (presetNames[preset].length > NAME_SHOWN) nameShowUntil = Date.now() + NAME_SHOW_MS;
+}
+
+function presetSpeech() {
+    return presetNames[preset] ? `${preset}, ${presetNames[preset]}` : String(preset);
+}
+
+function renamePreset() {
+    const index = preset;
+    releaseAll();
+    pressure.fill(0);
+    pressureSent.fill(0);
+    pressureDirty = false;
+    openTextEntry({
+        title: 'Set name',
+        initialText: presetNames[index],
+        padSelect: false,   /* the pads keep their own LEDs; only the jog types */
+        onConfirm: (text) => {
+            presetNames[index] = cleanName(text);
+            showFullName();
+            scheduleSave();
+            announce(presetNames[index] ? `Preset ${index} named ${presetNames[index]}` : `Preset ${index} name cleared`);
+        },
+        onCancel: () => announceItem(IT_PRESET),
+        onAnnounce: announce
+    });
+}
+
 /* Stores the current settings in the active preset, loads another one and activates it.
    No program change is sent: the stored program only applies to later changes */
 function switchPreset(next) {
@@ -662,14 +712,16 @@ function switchPreset(next) {
     pressureSent.fill(0);
     pressureDirty = false;
     lastKnob = -1;
+    showFullName();
     requestTrackSync();
     scheduleSave();
-    announce(`Preset ${preset}. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
+    announce(`Preset ${presetSpeech()}. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
         `Output: ${OUT_SPOKEN[output]}`);
 }
 
 function loadSettings() {
     for (let i = 0; i < PRESET_COUNT; i++) presets[i] = defaultPreset();
+    presetNames.fill('');
     preset = 0;
     blackLayout = DEFAULT_BLACK_LAYOUT;
     applyPreset(presets[0]);
@@ -687,6 +739,9 @@ function loadSettings() {
                 program: data.program, pressureMode: data.pressure, pressureCC: data.pressureCC, knobCC: data.cc
             });
         }
+        if (Array.isArray(data.names)) {
+            for (let i = 0; i < PRESET_COUNT; i++) presetNames[i] = cleanName(data.names[i]);
+        }
         applyPreset(presets[preset]);
         if (Number.isInteger(data.blackLayout)) blackLayout = clamp(data.blackLayout, 0, LAYOUT_COUNT - 1);
         for (let i = 0; i < KNOB_COUNT; i++) {
@@ -702,7 +757,7 @@ function saveSettings() {
     if (typeof host_write_file !== 'function') return;
     if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
     presets[preset] = snapshotPreset();
-    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, value: knobValue, blackLayout }));
+    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, names: presetNames, value: knobValue, blackLayout }));
 }
 
 function scheduleSave() {
@@ -905,9 +960,11 @@ function handleCC(cc, value) {
     }
 
     /* Jog click toggles between moving the selection and editing its value.
-       Shift + jog click belongs to Schwung (exit) */
+       Shift + jog click renames the Set; with Vol touched it is Schwung's exit combo */
     if (cc === MoveMainButton) {
-        if (value > 0 && !shiftHeld) {
+        if (value > 0 && shiftHeld) {
+            if (!helpOpen && selItem === IT_PRESET) renamePreset();
+        } else if (value > 0) {
             if (helpOpen) {
                 helpOpen = false;
                 announce('Help closed');
@@ -917,7 +974,8 @@ function handleCC(cc, value) {
                 announce(`Help. ${HELP_LINES[0]}`);
             } else if (!editing) {
                 editing = true;
-                announce(`Editing ${ITEM_NAMES[selItem]}`);
+                announce(selItem === IT_PRESET ? 'Editing Preset. Shift plus jog click renames the Set'
+                    : `Editing ${ITEM_NAMES[selItem]}`);
             } else {
                 editing = false;
                 announceItem(selItem);
@@ -998,6 +1056,13 @@ function handleCC(cc, value) {
 globalThis.onMidiMessageInternal = function (data) {
     if (exiting) return;
     const type = data[0] & 0xF0;
+
+    /* The name keyboard takes every input; only Shift is still tracked */
+    if (isTextEntryActive()) {
+        if (type === MidiCC && data[1] === MoveShift) shiftHeld = data[2] > 0;
+        else handleTextEntryMidi(data);
+        return;
+    }
 
     /* Knob touch: handled before the filters, which drop capacitive touch */
     if ((type === MidiNoteOn || type === MidiNoteOff) &&
@@ -1124,6 +1189,11 @@ function drawKnobInfo() {
         return;
     }
     const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
+    if (!active && selItem === IT_PRESET && editing) {
+        print(2, 40, 'Shift+Jog click:', 1);
+        print(2, 50, 'rename this Set', 1);
+        return;
+    }
     if (!active) {
         drawKnobCCList();
         return;
@@ -1169,6 +1239,10 @@ function drawUI() {
     if (now - lastDraw < DRAW_INTERVAL_MS) return;
     lastDraw = now;
     clear_screen();
+    if (isTextEntryActive()) {
+        drawTextEntry();
+        return;
+    }
     if (helpOpen) {
         drawHelp();
         return;
@@ -1183,8 +1257,9 @@ function drawUI() {
     let chText = autoMode ? `Auto ${chs[0]}` : chs.join(',');
     if (autoMode && text_width(chText) > free) chText = `A${chs[0]}`;
     else if (text_width(chText) > free) chText = 'multi';
-    drawItem(IT_PRESET, 2, 10, 'Set:', String(preset));
-    drawItem(IT_CHANNEL, RIGHT_COL_X, 10, 'Ch:', chText);
+    const fullName = Date.now() < nameShowUntil;
+    drawItem(IT_PRESET, 2, 10, 'Set:', presetLabel(fullName));
+    if (!fullName) drawItem(IT_CHANNEL, RIGHT_COL_X, 10, 'Ch:', chText);
     drawItem(IT_FROM, 2, 20, 'From:', noteName(fromNote));
     drawItem(IT_PROGRAM, RIGHT_COL_X, 20, 'Prg:', String(program));
     drawItem(IT_OUT, 2, 30, 'Out:', OUT_NAMES[output]);
@@ -1229,6 +1304,8 @@ globalThis.init = function () {
     exitAt = 0;
     exitSteps = [];
     shiftHeld = false;
+    nameShowUntil = 0;
+    closeTextEntry();
     selItem = IT_PRESET;
     editing = false;
     helpOpen = false;
@@ -1251,6 +1328,7 @@ globalThis.onResume = function () {
 
 /* Safe to run twice (Back handler, then onUnload) */
 function shutdown() {
+    closeTextEntry();
     releaseAll();
     for (let i = 0; i < 32; i++) setLED(FIRST_PAD + i, Black, true);
     for (let i = 0; i < 16; i++) setLED(FIRST_STEP + i, Black, true);
@@ -1286,6 +1364,7 @@ globalThis.tick = function () {
     syncMoveTrack();
     pollTransport();
     pollCapture();
+    tickTextEntry();
     updateTransportLeds();
     updateLeds();
     drawUI();
