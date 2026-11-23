@@ -1481,6 +1481,7 @@ globalThis.init = function () {
     knobTouched.fill(false);
     lastKnob = -1;
     knobBank = 0;
+    loadSettings();
     autoChannel();
     enterNoteMode();
     announce(`Piano Keys. ${ITEM_NAMES[IT_CHANNEL]}: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
