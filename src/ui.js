@@ -47,8 +47,9 @@
  *   Shift + knob        reassign the knob's CC number in the active bank (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
  *
- * Each of the 10 presets keeps Ch, From, Prg, Out, AT and the knob CC numbers. Presets and the
- * last knob values are saved to disk and restored on start.
+ * Each of the 10 presets keeps Ch, From, Prg, Out, AT, the knob CC numbers and the knob values
+ * (new CC or Set reset: 64). Knob values are written to disk on a Set change or on exit, not on
+ * every turn. Presets are saved to disk and restored on start.
  */
 
 import {
@@ -122,6 +123,7 @@ const KNOB_BANKS = 2;            /* Left = bank L, Right = bank R */
 const KNOB_TOTAL = KNOB_COUNT * KNOB_BANKS;
 const KNOB_BANK_NAMES = ['L', 'R'];
 const KNOB_BANK_SPOKEN = ['Left', 'Right'];
+const KNOB_START_VALUE = 64;
 const DEFAULT_KNOB_CC = [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86];
 const MAX_KNOB_STEP = 8;
 const INFO_HOLD_MS = 1200;
@@ -208,7 +210,8 @@ let knobBank = 0;                /* active knob bank; always starts (and returns
 const knobCC = DEFAULT_KNOB_CC.slice();           /* bank * 8 + knob -> CC number */
 const presets = [];                               /* stored settings of the inactive presets */
 const presetNames = new Array(PRESET_COUNT).fill('');   /* preset -> Set name; '' = unnamed */
-const knobValue = new Array(KNOB_TOTAL).fill(64); /* bank * 8 + knob -> last sent value */
+const knobValue = new Array(KNOB_TOTAL).fill(KNOB_START_VALUE); /* bank * 8 + knob -> last sent value of the active Set */
+let knobValuesDirty = false;     /* knob values changed since the last save */
 const knobTouched = new Array(KNOB_COUNT).fill(false);
 let lastKnob = -1;
 let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
@@ -620,13 +623,17 @@ function clamp(v, lo, hi) {
 function defaultPreset() {
     return {
         autoMode: true, navChannel: 0, channelMask: 0, fromNote: BASE_NOTE, program: 0,
-        output: OUT_MOVE, pressureMode: AT_CHANNEL, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice()
+        output: OUT_MOVE, pressureMode: AT_CHANNEL, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice(),
+        knobValue: new Array(KNOB_TOTAL).fill(KNOB_START_VALUE)
     };
 }
 
 /* Current live settings as a preset */
 function snapshotPreset() {
-    return { autoMode, navChannel, channelMask, fromNote, program, output, pressureMode, pressureCC, knobCC: knobCC.slice() };
+    return {
+        autoMode, navChannel, channelMask, fromNote, program, output, pressureMode, pressureCC,
+        knobCC: knobCC.slice(), knobValue: knobValue.slice()
+    };
 }
 
 /* Complete, validated preset from saved data; missing or invalid fields get defaults */
@@ -653,6 +660,9 @@ function sanitizePreset(raw) {
         if (Array.isArray(raw.knobCC) && Number.isInteger(raw.knobCC[i])) {
             p.knobCC[i] = clamp(raw.knobCC[i], 0, 127);
         }
+        if (Array.isArray(raw.knobValue) && Number.isInteger(raw.knobValue[i])) {
+            p.knobValue[i] = clamp(raw.knobValue[i], 0, 127);
+        }
     }
     return p;
 }
@@ -666,7 +676,10 @@ function applyPreset(p) {
     output = p.output;
     pressureMode = p.pressureMode;
     pressureCC = p.pressureCC;
-    for (let i = 0; i < KNOB_TOTAL; i++) knobCC[i] = p.knobCC[i];
+    for (let i = 0; i < KNOB_TOTAL; i++) {
+        knobCC[i] = p.knobCC[i];
+        knobValue[i] = p.knobValue[i];
+    }
 }
 
 function cleanName(raw) {
@@ -784,20 +797,16 @@ function loadSettings() {
         }
         applyPreset(presets[preset]);
         if (Number.isInteger(data.blackLayout)) blackLayout = clamp(data.blackLayout, 0, LAYOUT_COUNT - 1);
-        for (let i = 0; i < KNOB_TOTAL; i++) {
-            if (Array.isArray(data.value) && Number.isInteger(data.value[i])) {
-                knobValue[i] = clamp(data.value[i], 0, 127);
-            }
-        }
     } catch (e) { /* corrupt file: keep defaults */ }
 }
 
 function saveSettings() {
     saveAt = 0;
+    knobValuesDirty = false;
     if (typeof host_write_file !== 'function') return;
     if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
     presets[preset] = snapshotPreset();
-    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, names: presetNames, value: knobValue, blackLayout }));
+    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, names: presetNames, blackLayout }));
 }
 
 function scheduleSave() {
@@ -837,7 +846,12 @@ function handleKnob(knob, value) {
     if (shiftHeld) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        knobCC[slot] = clamp(knobCC[slot] + delta, 0, 127);
+        const cc = clamp(knobCC[slot] + delta, 0, 127);
+        if (cc !== knobCC[slot]) {
+            knobCC[slot] = cc;
+            knobValue[slot] = KNOB_START_VALUE;   /* a new CC starts from the middle */
+            knobValuesDirty = true;
+        }
         showKnobInfo(knob, 'assign');
         scheduleSave();
         return;
@@ -850,8 +864,8 @@ function handleKnob(knob, value) {
     knobValue[slot] = next;
     showKnobInfo(knob, 'turn');
     if (!changed) return;
+    knobValuesDirty = true;   /* written with the next save, a Set change or on exit; no write per turn */
     sendOnChannels(MidiCC, currentChannels(), knobCC[slot], next);
-    scheduleSave();
 }
 
 function handleKnobTouch(knob, touched) {
@@ -1419,7 +1433,7 @@ function shutdown() {
     }
     updateTransportLeds(true);
     suppressMoveLeds(false);
-    if (saveAt) saveSettings();
+    if (saveAt || knobValuesDirty) saveSettings();
 }
 
 globalThis.onUnload = shutdown;

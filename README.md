@@ -43,7 +43,7 @@ White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B  
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
 | Shift + X (Delete) | Resets the active Set to the defaults: name cleared, Ch = Auto, From, Prg, Out, AT and the knob CC numbers back to their defaults (the other Sets are untouched). The first press only opens a confirmation on the screen ("Reset Set …? Shift+X again: reset"); a second Shift + X press does the reset. Back, a jog turn or a jog click cancels. X without Shift does nothing for now. The screen reader announces the question, the result and the cancellation |
 | Back | Exit the module |
-| Knobs 1–8 | Send MIDI CC of the active bank (default CC 71–78 in bank L, CC 79–86 in bank R; value 0–127, faster turn = bigger steps; each bank keeps its own values) |
+| Knobs 1–8 | Send MIDI CC of the active bank (default CC 71–78 in bank L, CC 79–86 in bank R; value 0–127, faster turn = bigger steps; each bank keeps its own values, saved per Set) |
 | Shift + knob | Reassign that knob's CC number in the active bank (0–127); nothing is sent |
 | Touch knob | Display shows the knob's CC number; turning also shows the value |
 | Shift + Volume touch + jog click | Exit (built into Schwung) |
@@ -56,7 +56,7 @@ White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B  
 
 Notes go to Move's own tracks by default (cable-2 injection), so the track listening on the chosen channel plays them. The Out setting (jog) also lets you send them to a USB-A device.
 
-**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments) and their names, the active preset, the black key layout and the last knob values are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start.
+**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments and knob values) and their names, the active preset and the black key layout are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start. Knob values are kept in memory while turning and written to the file when the Set changes or the module exits (not on every turn); to save them on exit, leave the module with the Back button; changing a knob's CC number or resetting the Set sets the value back to 64.
 
 ## Screen reader
 
