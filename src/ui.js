@@ -223,6 +223,7 @@ const EXIT_TRACK_STEP_MS = 100;  /* spacing of the track button presses sent on 
 const SESSION_SETTLE_MS = 250;   /* wait after switching Move to Session mode before the track presses */
 let exitSteps = [];              /* pending injected USB-MIDI packets {at, pkt} */
 let saveAt = 0;
+let lastSavedText = '';          /* what the settings file holds; an identical save is skipped */
 let refreshCursor = 0;
 let auxCursor = 0;
 const midiInFlashUntil = new Array(16).fill(0);   /* channel 0-15 -> end of its step LED flash */
@@ -782,6 +783,7 @@ function loadSettings() {
     try {
         const text = host_read_file(SETTINGS_FILE);
         if (!text) return;
+        lastSavedText = text;
         const data = JSON.parse(text);
         if (Array.isArray(data.presets)) {
             for (let i = 0; i < PRESET_COUNT; i++) presets[i] = sanitizePreset(data.presets[i]);
@@ -804,9 +806,12 @@ function saveSettings() {
     saveAt = 0;
     knobValuesDirty = false;
     if (typeof host_write_file !== 'function') return;
-    if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
     presets[preset] = snapshotPreset();
-    host_write_file(SETTINGS_FILE, JSON.stringify({ preset, presets, names: presetNames, blackLayout }));
+    const text = JSON.stringify({ preset, presets, names: presetNames, blackLayout });
+    if (text === lastSavedText) return;
+    if (typeof host_ensure_dir === 'function') host_ensure_dir(SETTINGS_DIR);
+    host_write_file(SETTINGS_FILE, text);
+    lastSavedText = text;
 }
 
 function scheduleSave() {
