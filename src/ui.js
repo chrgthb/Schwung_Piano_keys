@@ -202,7 +202,8 @@ let pressureMode = AT_CHANNEL;
 let pressureCC = 1;              /* CC number used in AT_CC mode, 1..127 */
 let shiftHeld = false;
 let lastAutoChannel = 1;
-let lastAutoPoll = 0;
+let moveInfoAt = 0;
+let moveInfoCache = null;
 let lastDraw = 0;
 let nameShowUntil = 0;           /* until then the full Set name is drawn in place of the Ch item */
 
@@ -308,11 +309,22 @@ function padOffset(padIndex) {
     return rel === null ? null : rel + 12 * (row >> 1);
 }
 
+/* Pad -> note table, rebuilt only when From or the black key layout changed */
+const padNotes = new Array(32).fill(null);
+let padNotesFrom = -1;
+let padNotesLayout = -1;
+
 function padNote(padIndex) {
-    const offset = padOffset(padIndex);
-    if (offset === null) return null;
-    const note = fromNote + offset;
-    return note >= 0 && note <= 127 ? note : null;
+    if (padNotesFrom !== fromNote || padNotesLayout !== blackLayout) {
+        padNotesFrom = fromNote;
+        padNotesLayout = blackLayout;
+        for (let i = 0; i < 32; i++) {
+            const offset = padOffset(i);
+            const note = offset === null ? -1 : fromNote + offset;
+            padNotes[i] = note >= 0 && note <= 127 ? note : null;
+        }
+    }
+    return padNotes[padIndex];
 }
 
 function padColor(padIndex) {
@@ -321,17 +333,28 @@ function padColor(padIndex) {
     return (padIndex >> 3) & 1 ? BLACK_KEY_COLOR : WHITE_KEY_COLOR;
 }
 
+/* Move's info from the host, read at most every AUTO_POLL_MS; null when unavailable */
+function moveInfo() {
+    if (typeof host_get_move_info !== 'function') return null;
+    const now = Date.now();
+    if (now - moveInfoAt >= AUTO_POLL_MS) {
+        moveInfoAt = now;
+        const info = host_get_move_info();
+        moveInfoCache = info && info.valid ? info : null;
+    }
+    return moveInfoCache;
+}
+
+/* Track selected on Move, 0-3; -1 when not known */
+function selectedMoveTrack() {
+    const info = moveInfo();
+    return info && info.selectedTrack >= 0 && info.selectedTrack <= 3 ? info.selectedTrack : -1;
+}
+
 function autoChannel() {
     if (forcedTrack) return lastAutoChannel;   /* Move has not switched to the picked track yet */
-    const now = Date.now();
-    if (now - lastAutoPoll < AUTO_POLL_MS) return lastAutoChannel;
-    lastAutoPoll = now;
-    if (typeof host_get_move_info === 'function') {
-        const info = host_get_move_info();
-        if (info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3) {
-            lastAutoChannel = info.selectedTrack + 1;
-        }
-    }
+    const track = selectedMoveTrack();
+    if (track >= 0) lastAutoChannel = track + 1;
     return lastAutoChannel;
 }
 
@@ -438,9 +461,8 @@ function requestTrackSync() {
 function beginExit() {
     let at = Date.now();
     if (typeof move_midi_inject_to_move === 'function') {
-        const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
-        const known = !!(info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3);
-        const selected = known ? info.selectedTrack : lastAutoChannel - 1;
+        const track = selectedMoveTrack();
+        const selected = track >= 0 ? track : lastAutoChannel - 1;
         const order = [0, 1, 2, 3].filter(t => t !== selected).concat(selected);
         /* The Note/Session toggle (CC 50, labelled Menu in the constants) switches Move to
            Session mode; the track buttons then bring it back to Note mode with a full repaint */
@@ -477,9 +499,9 @@ function syncMoveTrack() {
     if (!trackSyncPending || now < trackSyncAt) return;
 
     const target = targetTrack();
-    const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
-    const known = !!(info && info.valid && info.selectedTrack >= 0 && info.selectedTrack <= 3);
-    if (target === 0 || (known && info.selectedTrack + 1 === target) ||
+    const track = selectedMoveTrack();
+    const known = track >= 0;
+    if (target === 0 || (known && track + 1 === target) ||
         trackSyncTries >= (known ? TRACK_MAX_TRIES : 1)) {
         trackSyncPending = false;
         forcedTrack = 0;
@@ -521,6 +543,12 @@ function resetPressure(padIndex) {
     pressure[padIndex] = 0;
     pressureSent[padIndex] = 0;
     pressureDirty = true;
+}
+
+function clearPressure() {
+    pressure.fill(0);
+    pressureSent.fill(0);
+    pressureDirty = false;
 }
 
 function releaseAll() {
@@ -612,7 +640,7 @@ function flushPressure() {
 }
 
 function handlePressure(padIndex, value) {
-    if (pressureMode === AT_OFF || !held[padIndex]) return;
+    if (pressureMode === AT_OFF || !held[padIndex] || pressure[padIndex] === value) return;
     pressure[padIndex] = value;
     pressureDirty = true;
 }
@@ -704,9 +732,7 @@ function presetSpeech() {
 function renamePreset() {
     const index = preset;
     releaseAll();
-    pressure.fill(0);
-    pressureSent.fill(0);
-    pressureDirty = false;
+    clearPressure();
     openTextEntry({
         title: 'Set name',
         initialText: presetNames[index],
@@ -741,9 +767,7 @@ function resetPreset() {
     releaseAll();
     presetNames[preset] = '';
     applyPreset(defaultPreset());
-    pressure.fill(0);
-    pressureSent.fill(0);
-    pressureDirty = false;
+    clearPressure();
     lastKnob = -1;
     knobBank = 0;
     nameShowUntil = 0;
@@ -761,9 +785,7 @@ function switchPreset(next) {
     presets[preset] = snapshotPreset();
     preset = next;
     applyPreset(presets[preset]);
-    pressure.fill(0);
-    pressureSent.fill(0);
-    pressureDirty = false;
+    clearPressure();
     lastKnob = -1;
     knobBank = 0;
     showFullName();
@@ -884,9 +906,7 @@ function setPressure(mode, cc) {
     resetChannelPressure();
     pressureMode = mode;
     pressureCC = cc;
-    pressure.fill(0);
-    pressureSent.fill(0);
-    pressureDirty = false;
+    clearPressure();
     scheduleSave();
 }
 
@@ -911,8 +931,8 @@ function showNotice(lines, ms) {
 }
 
 function moveTempo() {
-    const info = typeof host_get_move_info === 'function' ? host_get_move_info() : null;
-    return info && info.valid && info.tempo > 0 ? info.tempo : 0;
+    const info = moveInfo();
+    return info && info.tempo > 0 ? info.tempo : 0;
 }
 
 function formatTempo(tempo) {
@@ -1247,23 +1267,53 @@ function updateLeds() {
     auxCursor = (auxCursor + 1) % AUX_LED_COUNT;
 }
 
+/* Widths of the fixed strings, measured on first use (text_width is only available at runtime) */
+let fixedWidths = null;
+const numberWidths = [];         /* 0..127 -> width of its decimal text */
+const labelWidths = new Map();   /* item label -> width */
+
+function widths() {
+    if (!fixedWidths) {
+        fixedWidths = {
+            cell: text_width('000 '),
+            digits: text_width('000'),
+            help: text_width('[Help]'),
+            chFree: 126 - (RIGHT_COL_X + text_width('Ch:') + ITEM_GAP),
+            knobFirstX: KNOB_BANK_NAMES.map(name => 2 + text_width(`KnobCC-${name}: `))
+        };
+    }
+    return fixedWidths;
+}
+
+function numberWidth(n) {
+    if (numberWidths[n] === undefined) numberWidths[n] = text_width(String(n));
+    return numberWidths[n];
+}
+
+function labelWidth(label) {
+    let w = labelWidths.get(label);
+    if (w === undefined) {
+        w = text_width(label);
+        labelWidths.set(label, w);
+    }
+    return w;
+}
+
 /* All knob CC numbers in 3-digit right-aligned cells: knobs 1-3 after the label on the
    first line, knobs 4-8 on the second line, the last three under the first three */
 function drawKnobCCList() {
-    const label = `KnobCC-${KNOB_BANK_NAMES[knobBank]}: `;
-    const cellW = text_width('000 ');
-    const digitsW = text_width('000');
-    const firstX = 2 + text_width(label);
+    const { cell, digits, knobFirstX } = widths();
+    const firstX = knobFirstX[knobBank];
     const topCount = 3;
     const drawCell = (knob, x, y) => {
-        const s = String(knobCC[knobSlot(knob)]);
-        print(x + digitsW - text_width(s), y, s, 1);
+        const cc = knobCC[knobSlot(knob)];
+        print(x + digits - numberWidth(cc), y, String(cc), 1);
     };
 
-    print(2, 40, label, 1);
+    print(2, 40, `KnobCC-${KNOB_BANK_NAMES[knobBank]}: `, 1);
     for (let k = 0; k < KNOB_COUNT; k++) {
-        if (k < topCount) drawCell(k, firstX + k * cellW, 40);
-        else drawCell(k, firstX + (k - KNOB_COUNT + topCount) * cellW, 50);
+        if (k < topCount) drawCell(k, firstX + k * cell, 40);
+        else drawCell(k, firstX + (k - KNOB_COUNT + topCount) * cell, 50);
     }
 }
 
@@ -1303,7 +1353,7 @@ function drawText(x, y, text, inverted) {
    being edited. A negative x right-aligns the item to the screen edge. */
 function drawItem(item, x, y, label, value) {
     const gap = ITEM_GAP;
-    const labelW = text_width(label);
+    const labelW = labelWidth(label);
     const width = labelW + gap + text_width(value);
     const left = x < 0 ? 128 + x - width : x;
     const selected = selItem === item;
@@ -1346,14 +1396,14 @@ function drawUI() {
     }
     const chs = currentChannels();
     print(2, 0, 'Piano Keys', 1);
-    drawText(126 - text_width('[Help]'), 0, '[Help]', selItem === IT_HELP);
+    const { help, chFree } = widths();
+    drawText(126 - help, 0, '[Help]', selItem === IT_HELP);
 
     /* Ch and Prg labels start at the screen center, so they never move. The channel list
        becomes "multi" when the numbers do not fit next to the label */
-    const free = 126 - (RIGHT_COL_X + text_width('Ch:') + ITEM_GAP);
     let chText = autoMode ? `Auto ${chs[0]}` : chs.join(',');
-    if (autoMode && text_width(chText) > free) chText = `A${chs[0]}`;
-    else if (text_width(chText) > free) chText = 'multi';
+    if (autoMode && text_width(chText) > chFree) chText = `A${chs[0]}`;
+    else if (text_width(chText) > chFree) chText = 'multi';
     const fullName = Date.now() < nameShowUntil;
     drawItem(IT_PRESET, 2, 10, 'Set:', presetLabel(fullName));
     if (!fullName) drawItem(IT_CHANNEL, RIGHT_COL_X, 10, 'Ch:', chText);
@@ -1372,8 +1422,10 @@ function suppressMoveLeds(on) {
 }
 
 globalThis.init = function () {
+    shutDown = false;
     suppressMoveLeds(true);
-    lastAutoPoll = 0;
+    moveInfoAt = 0;
+    moveInfoCache = null;
     lastDraw = 0;
     auxCursor = 0;
     midiInFlashUntil.fill(0);
@@ -1391,9 +1443,7 @@ globalThis.init = function () {
     forwardedHeld.clear();
     lit.fill(-1);
     held.fill(null);
-    pressure.fill(0);
-    pressureSent.fill(0);
-    pressureDirty = false;
+    clearPressure();
     channelSent = 0;
     channelSentMask = 0;
     stepLit.fill(-1);
@@ -1424,8 +1474,13 @@ globalThis.onResume = function () {
     lastTransportLed = 0;
 };
 
-/* Safe to run twice (Back handler, then onUnload) */
+/* Runs from the Back handler and again from onUnload: the second run must not
+   write black LEDs over what Move has repainted in the meantime */
+let shutDown = false;
+
 function shutdown() {
+    if (shutDown) return;
+    shutDown = true;
     closeTextEntry();
     releaseAll();
     for (let i = 0; i < 32; i++) setLED(FIRST_PAD + i, Black, true);
