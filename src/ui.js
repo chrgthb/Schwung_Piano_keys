@@ -14,7 +14,8 @@
  *
  * Controls:
  *   Track buttons 1-4   select that Move track; the channel stays on Auto and follows it
- *   Left / Right        channel (Auto, 1..16) (only that channel)
+ *   Left / Right        knob bank L / R (starts on L, back to L on a Set change); the 8 knobs
+ *                       send the CCs of the active bank, shown as KnobCC-L / KnobCC-R
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
  *                       A note-on arriving on the external MIDI input flashes the step of its
@@ -39,8 +40,8 @@
  *                       new tempo when Move's tempo changed) or "Undo sent" for a moment
  *   Mute                sent to Move only (not to USB)
  *   Shift + Mute        All MIDI notes off (CC 123 on all channels) to the selected output(s)
- *   Knobs 1-8           send MIDI CC (default CC 71-78, relative -> absolute 0..127)
- *   Shift + knob        reassign the knob's CC number (nothing is sent)
+ *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
+ *   Shift + knob        reassign the knob's CC number in the active bank (nothing is sent)
  *   Knob touch          shows the CC number; turning shows CC number and value
  *
  * Each of the 10 presets keeps Ch, From, Prg, Out, AT and the knob CC numbers. Presets and the
@@ -117,7 +118,11 @@ const TEMPO_CHANGE_MIN = 0.05;   /* BPM difference counted as a changed tempo */
 const KNOB_COUNT = 8;
 const KNOB_CC_FIRST = 71;        /* MoveKnob1..MoveKnob8 = CC 71..78 */
 const KNOB_TOUCH_FIRST = 0;      /* knob touch = notes 0..7 */
-const DEFAULT_KNOB_CC = [71, 72, 73, 74, 75, 76, 77, 78];
+const KNOB_BANKS = 2;            /* Left = bank L, Right = bank R */
+const KNOB_TOTAL = KNOB_COUNT * KNOB_BANKS;
+const KNOB_BANK_NAMES = ['L', 'R'];
+const KNOB_BANK_SPOKEN = ['Left', 'Right'];
+const DEFAULT_KNOB_CC = [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86];
 const MAX_KNOB_STEP = 8;
 const INFO_HOLD_MS = 1200;
 const SAVE_DELAY_MS = 800;
@@ -150,7 +155,7 @@ const NAV_ORDER = [IT_HELP, IT_PRESET, IT_CHANNEL, IT_FROM, IT_PROGRAM, IT_OUT, 
 /* Buttons whose function cannot be changed on the jog-selectable main screen */
 const HELP_LINES = [
     'Up/Down: octave',
-    'Left/Right: channel',
+    'Left/Right: knob bank',
     'Tracks 1-4: channel',
     'Steps 1-16: multi Ch',
     'Menu: black layout',
@@ -174,7 +179,7 @@ const OUT_SPOKEN = ['Move', 'USB', 'Move and USB'];
 const AT_SPOKEN = ['Off', 'Polyphonic', 'Channel'];
 
 let preset = 0;                  /* active preset 0..9 */
-let navChannel = 0;              /* Left/Right position: 0 = Auto, 1..16 */
+let navChannel = 0;              /* jog / step button position: 0 = Auto, 1..16 */
 let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Auto */
 let autoMode = true;             /* follow the selected Move track */
 let fromNote = BASE_NOTE;        /* note of the lowest C key */
@@ -197,10 +202,11 @@ let lastAutoPoll = 0;
 let lastDraw = 0;
 let nameShowUntil = 0;           /* until then the full Set name is drawn in place of the Ch item */
 
-const knobCC = DEFAULT_KNOB_CC.slice();           /* knob -> CC number */
+let knobBank = 0;                /* active knob bank; always starts (and returns after a Set change) on L */
+const knobCC = DEFAULT_KNOB_CC.slice();           /* bank * 8 + knob -> CC number */
 const presets = [];                               /* stored settings of the inactive presets */
 const presetNames = new Array(PRESET_COUNT).fill('');   /* preset -> Set name; '' = unnamed */
-const knobValue = new Array(KNOB_COUNT).fill(64); /* knob -> last sent value */
+const knobValue = new Array(KNOB_TOTAL).fill(64); /* bank * 8 + knob -> last sent value */
 const knobTouched = new Array(KNOB_COUNT).fill(false);
 let lastKnob = -1;
 let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
@@ -641,7 +647,7 @@ function sanitizePreset(raw) {
     if (Number.isInteger(raw.pressureMode) && raw.pressureMode >= 0 && raw.pressureMode < AT_NAMES.length) {
         p.pressureMode = raw.pressureMode;
     }
-    for (let i = 0; i < KNOB_COUNT; i++) {
+    for (let i = 0; i < KNOB_TOTAL; i++) {
         if (Array.isArray(raw.knobCC) && Number.isInteger(raw.knobCC[i])) {
             p.knobCC[i] = clamp(raw.knobCC[i], 0, 127);
         }
@@ -658,7 +664,7 @@ function applyPreset(p) {
     output = p.output;
     pressureMode = p.pressureMode;
     pressureCC = p.pressureCC;
-    for (let i = 0; i < KNOB_COUNT; i++) knobCC[i] = p.knobCC[i];
+    for (let i = 0; i < KNOB_TOTAL; i++) knobCC[i] = p.knobCC[i];
 }
 
 function cleanName(raw) {
@@ -712,6 +718,7 @@ function switchPreset(next) {
     pressureSent.fill(0);
     pressureDirty = false;
     lastKnob = -1;
+    knobBank = 0;
     showFullName();
     requestTrackSync();
     scheduleSave();
@@ -744,7 +751,7 @@ function loadSettings() {
         }
         applyPreset(presets[preset]);
         if (Number.isInteger(data.blackLayout)) blackLayout = clamp(data.blackLayout, 0, LAYOUT_COUNT - 1);
-        for (let i = 0; i < KNOB_COUNT; i++) {
+        for (let i = 0; i < KNOB_TOTAL; i++) {
             if (Array.isArray(data.value) && Number.isInteger(data.value[i])) {
                 knobValue[i] = clamp(data.value[i], 0, 127);
             }
@@ -764,12 +771,26 @@ function scheduleSave() {
     saveAt = Date.now() + SAVE_DELAY_MS;
 }
 
+/* Index into knobCC / knobValue of a physical knob (0-7) in the active bank */
+function knobSlot(knob) {
+    return knobBank * KNOB_COUNT + knob;
+}
+
+function setKnobBank(bank) {
+    if (bank === knobBank) return;
+    knobBank = bank;
+    lastKnob = -1;
+    infoUntil = 0;
+    announce(`Knob bank ${KNOB_BANK_SPOKEN[bank]}`);
+}
+
 function showKnobInfo(knob, action) {
+    const slot = knobSlot(knob);
     lastKnob = knob;
     lastKnobAction = action;
     infoUntil = Date.now() + INFO_HOLD_MS;
-    if (action === 'assign') announce(`Knob ${knob + 1} assigned to CC ${knobCC[knob]}`);
-    else announce(`Knob ${knob + 1}, CC ${knobCC[knob]}, value ${knobValue[knob]}`);
+    if (action === 'assign') announce(`Knob ${knob + 1} assigned to CC ${knobCC[slot]}`);
+    else announce(`Knob ${knob + 1}, CC ${knobCC[slot]}, value ${knobValue[slot]}`);
 }
 
 /* Relative encoder value -> signed step; speed is encoded in the magnitude */
@@ -779,10 +800,11 @@ function knobStep(value) {
 }
 
 function handleKnob(knob, value) {
+    const slot = knobSlot(knob);
     if (shiftHeld) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
-        knobCC[knob] = clamp(knobCC[knob] + delta, 0, 127);
+        knobCC[slot] = clamp(knobCC[slot] + delta, 0, 127);
         showKnobInfo(knob, 'assign');
         scheduleSave();
         return;
@@ -790,12 +812,12 @@ function handleKnob(knob, value) {
 
     const step = knobStep(value);
     if (step === 0) return;
-    const next = clamp(knobValue[knob] + step, 0, 127);
-    const changed = next !== knobValue[knob];
-    knobValue[knob] = next;
+    const next = clamp(knobValue[slot] + step, 0, 127);
+    const changed = next !== knobValue[slot];
+    knobValue[slot] = next;
     showKnobInfo(knob, 'turn');
     if (!changed) return;
-    sendOnChannels(MidiCC, currentChannels(), knobCC[knob], next);
+    sendOnChannels(MidiCC, currentChannels(), knobCC[slot], next);
     scheduleSave();
 }
 
@@ -1047,8 +1069,8 @@ function handleCC(cc, value) {
 
     if (cc === MoveUp) shiftOctave(1);
     else if (cc === MoveDown) shiftOctave(-1);
-    else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
-    else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
+    else if (cc === MoveRight) setKnobBank(1);
+    else if (cc === MoveLeft) setKnobBank(0);
     else if (cc === MoveMenu) setBlackLayout((blackLayout + 1) % LAYOUT_COUNT);
     else if (cc >= MoveRow4 && cc <= MoveRow1) selectTrack(MoveRow1 - cc + 1);
 }
@@ -1165,13 +1187,13 @@ function updateLeds() {
 /* All knob CC numbers in 3-digit right-aligned cells: knobs 1-3 after the label on the
    first line, knobs 4-8 on the second line, the last three under the first three */
 function drawKnobCCList() {
-    const label = 'Knobs CC: ';
+    const label = `KnobCC-${KNOB_BANK_NAMES[knobBank]}: `;
     const cellW = text_width('000 ');
     const digitsW = text_width('000');
     const firstX = 2 + text_width(label);
     const topCount = 3;
     const drawCell = (knob, x, y) => {
-        const s = String(knobCC[knob]);
+        const s = String(knobCC[knobSlot(knob)]);
         print(x + digitsW - text_width(s), y, s, 1);
     };
 
@@ -1198,8 +1220,8 @@ function drawKnobInfo() {
         drawKnobCCList();
         return;
     }
-    print(2, 40, `Knob ${lastKnob + 1}: CC ${knobCC[lastKnob]}`, 1);
-    if (lastKnobAction === 'turn') print(2, 50, `Value: ${knobValue[lastKnob]}`, 1);
+    print(2, 40, `Knob ${lastKnob + 1}: CC ${knobCC[knobSlot(lastKnob)]}`, 1);
+    if (lastKnobAction === 'turn') print(2, 50, `Value: ${knobValue[knobSlot(lastKnob)]}`, 1);
     else if (lastKnobAction === 'assign') print(2, 50, 'CC assigned', 1);
     else print(2, 50, shiftHeld ? 'Turn to set CC' : 'Shift+knob: set CC', 1);
 }
@@ -1312,7 +1334,7 @@ globalThis.init = function () {
     helpTop = 0;
     knobTouched.fill(false);
     lastKnob = -1;
-    loadSettings();
+    knobBank = 0;
     autoChannel();
     announce(`Piano Keys. ${ITEM_NAMES[IT_CHANNEL]}: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
         `Output: ${OUT_SPOKEN[output]}`);

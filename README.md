@@ -28,7 +28,7 @@ White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B  
 | Control | Function |
 |---|---|
 | Track buttons 1–4 | Select that Move track; the channel setting stays on Auto (shown as Auto 1–4) and follows the track |
-| Left / Right | Channel: Auto, 1…16 (only that channel) |
+| Left / Right | Select knob bank L / R: the 8 knobs send the CCs of the active bank (16 CCs in total). Starts on L and returns to L when the Set changes; the bottom of the screen shows "KnobCC-L:" or "KnobCC-R:" with the 8 CC numbers |
 | Step buttons 1–16 | Toggle MIDI channels 1–16; notes, aftertouch and knob CCs go to every active channel. Active steps are lit. A note-on received on the external MIDI input (USB-A) flashes the step of its channel for 100 ms: bright green on an active step, dim green on an inactive one (CCs and other messages do not flash) |
 | Jog turn | Moves the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT |
 | [Help] (top right) | Selectable with the jog turn (Set stays the initial selection). Jog click opens a short list of the buttons that cannot be changed on the main screen; the jog scrolls it line by line, the bottom line always reads "Click: exit" (jog click or Back closes it) |
@@ -42,12 +42,12 @@ White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B  
 | Shift + Mute | All MIDI notes off: releases the held pads and sends CC 123 on all 16 channels to the selected output(s). The display shows "All notes off" |
 | Play / Record | Handled by Move itself (start/stop, record); since Move's LED updates are suppressed while the module runs, the module tracks the transport state and lights the buttons itself (Play green, Record red) |
 | Back | Exit the module |
-| Knobs 1–8 | Send MIDI CC (default CC 71–78, value 0–127, faster turn = bigger steps) |
-| Shift + knob | Reassign that knob's CC number (0–127); nothing is sent |
+| Knobs 1–8 | Send MIDI CC of the active bank (default CC 71–78 in bank L, CC 79–86 in bank R; value 0–127, faster turn = bigger steps; each bank keeps its own values) |
+| Shift + knob | Reassign that knob's CC number in the active bank (0–127); nothing is sent |
 | Touch knob | Display shows the knob's CC number; turning also shows the value |
 | Shift + Volume touch + jog click | Exit (built into Schwung) |
 
-**Auto channel**: the channel of the track selected on Move when the module starts (track N ↔ channel N). During takeover the track buttons belong to the module, so use the track buttons to switch tracks (the setting stays Auto) or Left/Right and the step buttons to set a fixed channel. Pressing a step button leaves Auto and selects that channel; further steps add or remove channels (at least one stays on).
+**Auto channel**: the channel of the track selected on Move when the module starts (track N ↔ channel N). During takeover the track buttons belong to the module, so use the track buttons to switch tracks (the setting stays Auto) or the jog and the step buttons to set a fixed channel. Pressing a step button leaves Auto and selects that channel; further steps add or remove channels (at least one stays on).
 
 **Track selection**: if a Move track's MIDI In channel is "Auto", it plays whatever channel arrives as long as it is the *selected* track. Since the module owns the track buttons, whenever you pick a track or a fixed channel 1–4 it presses the matching track button on Move's behalf (and retries until Move reports that track selected), so the sound follows the channel. For best results set the tracks' MIDI In to their own channel (1–4) in Move.
 
