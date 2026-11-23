@@ -203,7 +203,7 @@ let noticeLines = [];            /* message shown in place of the knob info */
 let noticeUntil = 0;
 let captureWatchUntil = 0;
 let captureBaseTempo = 0;
-let pressureMode = AT_CHANNEL;
+let pressureMode = AT_POLY;
 let pressureCC = 1;              /* CC number used in AT_CC mode, 1..127 */
 let shiftHeld = false;
 let lastAutoChannel = 1;
@@ -669,7 +669,7 @@ function clamp(v, lo, hi) {
 function defaultPreset() {
     return {
         autoMode: true, navChannel: 0, channelMask: 0, fromNote: BASE_NOTE, program: 0,
-        output: OUT_MOVE, pressureMode: AT_CHANNEL, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice(),
+        output: OUT_MOVE, pressureMode: AT_POLY, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice(),
         knobValue: new Array(KNOB_TOTAL).fill(KNOB_START_VALUE)
     };
 }

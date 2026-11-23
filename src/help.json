@@ -79,8 +79,9 @@
         "AT setting:",
         " Off",
         " Poly: key pressure",
+        "  (default)",
         " Chan: channel",
-        "  pressure (default)",
+        "  pressure",
         " CC1, CC2 .. CC127:",
         "  pressure as a CC"
       ]
