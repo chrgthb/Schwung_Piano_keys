@@ -144,7 +144,14 @@
         "",
         "Mute goes to Move",
         " only; Shift + Mute",
-        " = all notes off"
+        " = all notes off",
+        "",
+        "X (Delete): reset",
+        " the Set (name and",
+        " values) to default.",
+        " Asks first: press",
+        " X again to confirm,",
+        " Back/jog cancels"
       ]
     }
   ]

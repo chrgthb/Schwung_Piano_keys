@@ -33,6 +33,9 @@
  *                       keyboard (the first 5 characters are shown after "Set:")
  *   Menu                black key layout: C# on the second pad (2, default) or on the first pad (1,
  *                       one more black key fits)
+ *   Delete (X)          reset the active Set (name and values) to the defaults: the first press
+ *                       shows a confirmation on the screen, a second Delete press resets,
+ *                       Back / jog cancels
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
@@ -50,7 +53,8 @@
 
 import {
     MidiNoteOn, MidiNoteOff, MidiCC,
-    MoveShift, MoveMenu, MoveMainKnob, MoveMainButton, MoveUp, MoveDown, MoveLeft, MoveRight,
+    MoveShift, MoveMenu, MoveBack, MoveCapture, MoveUndo, MoveMute, MoveDelete, MoveKnob1,
+    MoveMainKnob, MoveMainButton, MoveUp, MoveDown, MoveLeft, MoveRight,
     MoveRow1, MoveRow4, MovePlay, MoveRec,
     MovePads, White, DarkGrey3, Black, Green, Red
 } from '/data/UserData/schwung/shared/constants.mjs';
@@ -107,16 +111,12 @@ const BLACK_OFFSETS = [
 const LAYOUT_COUNT = BLACK_OFFSETS.length;
 const DEFAULT_BLACK_LAYOUT = 1;
 
-const BACK_CC = 51;
-const CAPTURE_CC = 52;
-const UNDO_CC = 56;
-const MUTE_CC = 88;
 const ALL_NOTES_OFF_CC = 123;
 const NOTICE_MS = 2500;          /* how long a "sent" message stays on screen */
 const CAPTURE_WATCH_MS = 2500;   /* after Capture, how long Move's tempo is watched for a change */
 const TEMPO_CHANGE_MIN = 0.05;   /* BPM difference counted as a changed tempo */
 const KNOB_COUNT = 8;
-const KNOB_CC_FIRST = 71;        /* MoveKnob1..MoveKnob8 = CC 71..78 */
+const KNOB_CC_FIRST = MoveKnob1; /* MoveKnob1..MoveKnob8 = CC 71..78 */
 const KNOB_TOUCH_FIRST = 0;      /* knob touch = notes 0..7 */
 const KNOB_BANKS = 2;            /* Left = bank L, Right = bank R */
 const KNOB_TOTAL = KNOB_COUNT * KNOB_BANKS;
@@ -164,6 +164,7 @@ const HELP_LINES = [
     'Mute: to Move',
     'Capture/Undo: to Move',
     'Shift+Mute: panic',
+    'X: reset Set (ask)',
     'Play/Rec: to Move',
     'Back: exit module'
 ];
@@ -190,6 +191,7 @@ let helpTop = 0;                 /* first visible help line */
 let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
 let blackLayout = DEFAULT_BLACK_LAYOUT;             /* index into BLACK_OFFSETS; global, not part of a preset */
+let resetPending = false;        /* Delete pressed once: waiting for the confirming second press */
 let noticeLines = [];            /* message shown in place of the knob info */
 let noticeUntil = 0;
 let captureWatchUntil = 0;
@@ -706,6 +708,37 @@ function renamePreset() {
     });
 }
 
+function askResetPreset() {
+    resetPending = true;
+    editing = false;
+    announce(`Reset Set ${presetSpeech()} to defaults? Press Delete again to confirm, Back to cancel`);
+}
+
+function cancelResetPreset() {
+    if (!resetPending) return false;
+    resetPending = false;
+    announce('Reset cancelled');
+    return true;
+}
+
+/* Active preset back to the defaults: name, channel, From, Prg, Out, AT and knob CC numbers */
+function resetPreset() {
+    resetPending = false;
+    releaseAll();
+    presetNames[preset] = '';
+    applyPreset(defaultPreset());
+    pressure.fill(0);
+    pressureSent.fill(0);
+    pressureDirty = false;
+    lastKnob = -1;
+    knobBank = 0;
+    nameShowUntil = 0;
+    requestTrackSync();
+    scheduleSave();
+    announce(`Set ${preset} reset to defaults. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
+        `Output: ${OUT_SPOKEN[output]}`);
+}
+
 /* Stores the current settings in the active preset, loads another one and activates it.
    No program change is sent: the stored program only applies to later changes */
 function switchPreset(next) {
@@ -984,6 +1017,7 @@ function handleCC(cc, value) {
     /* Jog click toggles between moving the selection and editing its value.
        Shift + jog click renames the Set; with Vol touched it is Schwung's exit combo */
     if (cc === MoveMainButton) {
+        if (value > 0 && cancelResetPreset()) return;
         if (value > 0 && shiftHeld) {
             if (!helpOpen && selItem === IT_PRESET) renamePreset();
         } else if (value > 0) {
@@ -1009,6 +1043,7 @@ function handleCC(cc, value) {
     if (cc === MoveMainKnob) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
+        if (cancelResetPreset()) return;
         if (helpOpen) {
             helpTop = clamp(helpTop + delta, 0, HELP_LINES.length - HELP_VISIBLE);
             announce(HELP_LINES[helpTop]);
@@ -1029,14 +1064,14 @@ function handleCC(cc, value) {
 
     if (cc >= MoveRow4 && cc <= MoveRow1 && Date.now() < trackIgnoreUntil) return;
 
-    if (cc === CAPTURE_CC || cc === UNDO_CC) {
+    if (cc === MoveCapture || cc === MoveUndo) {
         if (!forwardToMove(cc, value) || value === 0) return;
-        if (cc === CAPTURE_CC) handleCapture();
+        if (cc === MoveCapture) handleCapture();
         else handleUndo();
         return;
     }
 
-    if (cc === MUTE_CC) {
+    if (cc === MoveMute) {
         if (value > 0 && shiftHeld) allNotesOff();
         else forwardToMove(cc, value);
         return;
@@ -1050,12 +1085,21 @@ function handleCC(cc, value) {
         return;
     }
 
-    if (cc === BACK_CC && helpOpen) {
+    if (cc === MoveDelete) {
+        if (helpOpen) return;
+        if (resetPending) resetPreset();
+        else askResetPreset();
+        return;
+    }
+
+    if (cc === MoveBack && cancelResetPreset()) return;
+
+    if (cc === MoveBack && helpOpen) {
         helpOpen = false;
         return;
     }
 
-    if (cc === BACK_CC) {
+    if (cc === MoveBack) {
         exiting = true;
         shutdown();
         /* On exit Schwung normally replays the LED state from before the module started,
@@ -1256,6 +1300,14 @@ function drawHelp() {
     print(2, 54, 'Click: exit', 1);
 }
 
+function drawResetConfirm() {
+    print(2, 0, `Reset Set ${presetLabel(false)}?`, 1);
+    print(2, 14, 'Name and values go', 1);
+    print(2, 24, 'back to defaults.', 1);
+    print(2, 40, 'X again: reset', 1);
+    print(2, 52, 'Back/jog: cancel', 1);
+}
+
 function drawUI() {
     const now = Date.now();
     if (now - lastDraw < DRAW_INTERVAL_MS) return;
@@ -1267,6 +1319,10 @@ function drawUI() {
     }
     if (helpOpen) {
         drawHelp();
+        return;
+    }
+    if (resetPending) {
+        drawResetConfirm();
         return;
     }
     const chs = currentChannels();
@@ -1332,6 +1388,7 @@ globalThis.init = function () {
     editing = false;
     helpOpen = false;
     helpTop = 0;
+    resetPending = false;
     knobTouched.fill(false);
     lastKnob = -1;
     knobBank = 0;
