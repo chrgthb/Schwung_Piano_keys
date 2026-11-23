@@ -17,8 +17,8 @@
     {
       "title": "Channel",
       "lines": [
-        "Track 1-4: channel",
-        " 1-4 only",
+        "Track 1-4: select",
+        " track, stays Auto",
         "Left/Right: Auto,",
         " then 1-16",
         "Steps 1-16: toggle",
@@ -27,7 +27,7 @@
         "",
         "Auto: channel of the",
         " track selected on",
-        " Move at start"
+        " Move"
       ]
     },
     {
@@ -55,7 +55,8 @@
         " (From moves by 12)",
         "",
         "Menu: black keys",
-        " C# on pad 1 or 2",
+        " C# on pad 2 or 1",
+        " (1: one more black)",
         "",
         "Out (jog): output",
         " Move / USB /",

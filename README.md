@@ -7,34 +7,34 @@ An overtake module that turns the 32 pads into a piano keyboard instead of Move'
 </p>
 
 ```
-Row 4  C#  D#   –   F#  G#  A#   –   C#     (black, magenta)   upper octave
+Row 4  –   C#   D#  –   F#  G#   A#  –      (black, magenta)   upper octave
 Row 3  C   D    E   F   G   A    B   C      (white)            upper octave
-Row 2  C#  D#   –   F#  G#  A#   –   C#     (black, magenta)   lower octave
+Row 2  –   C#   D#  –   F#  G#   A#  –      (black, magenta)   lower octave
 Row 1  C   D    E   F   G   A    B   C      (white)            lower octave
 ```
 
-Unused pads (between E–F and B–C) stay dark. A pressed key lights up green.
+Unused pads (between E–F and B–C, and the first pad of the black rows) stay dark. A pressed key lights up green.
 
-The **Menu** button switches the black key layout (saved, applies to all presets):
+The **Menu** button switches the black key layout (saved, applies to all presets). The default is layout 2, where C# is on the second pad, so the black keys sit between the white keys like on a piano. In layout 1 the first pad is C#, which lets one more black key (the upper C#) fit on each black row:
 
 ```
-Layout 1 (default)                         Layout 2 (C# on the second pad, like a piano)
-Black row:  C#  D#   –   F#  G#  A#   –   C#        –   C#  D#   –   F#  G#  A#   –
-White row:  C   D    E   F   G   A    B   C         C   D   E    F   G   A   B    C
+Layout 2 (default, C# on the second pad)   Layout 1 (C# on the first pad)
+Black row:  –   C#  D#   –   F#  G#  A#   –        C#  D#   –   F#  G#  A#   –   C#
+White row:  C   D   E    F   G   A   B    C        C   D    E   F   G   A    B   C
 ```
 
 ## Controls
 
 | Control | Function |
 |---|---|
-| Track buttons 1–4 | MIDI channel 1–4 (only that channel) |
+| Track buttons 1–4 | Select that Move track; the channel setting stays on Auto (shown as Auto 1–4) and follows the track |
 | Left / Right | Channel: Auto, 1…16 (only that channel) |
 | Step buttons 1–16 | Toggle MIDI channels 1–16; notes, aftertouch and knob CCs go to every active channel. Active steps are lit |
 | Jog turn | Moves the highlighted (inverted) label: Preset / Ch / From / Prg / Out / AT |
 | [Help] (top right) | Selectable with the jog turn (Set stays the initial selection). Jog click opens a short list of the buttons that cannot be changed on the main screen; the jog scrolls it line by line, the bottom line always reads "Click: exit" (jog click or Back closes it) |
 | Jog click | Toggles editing: the value of the highlighted label becomes inverted and the jog changes it (Preset 0–9, Ch, From = lowest note, Prg = program change 0–127 sent on every change, Out, AT = pad pressure Off / Poly / Chan / CC1 / CC2 … CC127, default Chan). Program change and pressure CC are saved. Changing the Preset stores the current settings in the old preset and loads the new one (Ch, From, Prg, Out, AT and the knob CC numbers); no program change is sent on a preset switch, the stored Prg only applies to later changes. The label on screen is "Set:"; the channel list shows "multi" when the channel numbers do not fit |
 | Up / Down | Octave (From shifts by 12 semitones) |
-| Menu | Toggles the black key layout: C# on the first pad (1, default) or on the second pad (2). The display shows "Black keys: C# on pad 1/2". The output target (Move / USB / Move+USB) is changed with the jog (Out) |
+| Menu | Toggles the black key layout: C# on the second pad (2, default) or on the first pad (1, one more black key fits). The display shows "Black keys: C# on pad 1/2". The output target (Move / USB / Move+USB) is changed with the jog (Out) |
 | Capture | Sent to Move only when Move is an output target (Out = Move or Move+USB); never to USB, so external synths are unaffected. The display shows "Capture sent"; if Move's set tempo changes within ~2.5 s, "Tempo 123" is shown too. Move does not report to the module whether the capture worked or which tempo it detected, so the shown tempo is the set tempo read with `host_get_move_info()` |
 | Undo | Sent to Move only when Move is an output target, like Capture. The display shows "Undo sent" |
 | Mute | Sent to Move only when Move is an output target, like Capture |
@@ -46,9 +46,9 @@ White row:  C   D    E   F   G   A    B   C         C   D   E    F   G   A   B  
 | Touch knob | Display shows the knob's CC number; turning also shows the value |
 | Shift + Volume touch + jog click | Exit (built into Schwung) |
 
-**Auto channel**: the channel of the track selected on Move when the module starts (track N ↔ channel N). During takeover the track buttons belong to the module, so use the track buttons or Left/Right to change the channel. Pressing a step button leaves Auto and selects that channel; further steps add or remove channels (at least one stays on).
+**Auto channel**: the channel of the track selected on Move when the module starts (track N ↔ channel N). During takeover the track buttons belong to the module, so use the track buttons to switch tracks (the setting stays Auto) or Left/Right and the step buttons to set a fixed channel. Pressing a step button leaves Auto and selects that channel; further steps add or remove channels (at least one stays on).
 
-**Track selection**: if a Move track's MIDI In channel is "Auto", it plays whatever channel arrives as long as it is the *selected* track. Since the module owns the track buttons, whenever you pick channel 1–4 it presses the matching track button on Move's behalf (and retries until Move reports that track selected), so the sound follows the channel. For best results set the tracks' MIDI In to their own channel (1–4) in Move.
+**Track selection**: if a Move track's MIDI In channel is "Auto", it plays whatever channel arrives as long as it is the *selected* track. Since the module owns the track buttons, whenever you pick a track or a fixed channel 1–4 it presses the matching track button on Move's behalf (and retries until Move reports that track selected), so the sound follows the channel. For best results set the tracks' MIDI In to their own channel (1–4) in Move.
 
 **LEDs**: the module asks Schwung to suppress Move's own LED sysex (`shadow_set_overtake_suppress_sysex`) so the firmware should stop repainting the pads in its in-key/chromatic layout, but also re-sends pad, step and track button LEDs round-robin (1–2 USB-MIDI packets per tick) as a safety net. On Back the module asks Schwung for a native LED repaint (`shadow_set_skip_led_clear`) instead of the usual replay of the pre-start LED state, writes the tracked Play / Record state, then switches Move to Session mode (the Note/Session toggle) and presses the four track buttons on Move's behalf (the selected track last, so the selection does not change), which returns Move to Note mode and makes it redraw its pads and track LEDs, and exits ~0.3 s later.
 

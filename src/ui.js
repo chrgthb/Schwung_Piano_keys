@@ -2,9 +2,9 @@
  * Piano Keys - overtake module
  *
  * Turns Move's 4x8 pad grid into two octaves of piano keyboard:
- *   row 4 (top)   : black keys  C# D# -  F# G# A# -  C#
+ *   row 4 (top)   : black keys  -  C# D# -  F# G# A# -
  *   row 3         : white keys  C  D  E  F  G  A  B  C   (octave B, one octave up)
- *   row 2         : black keys  C# D# -  F# G# A# -  C#
+ *   row 2         : black keys  -  C# D# -  F# G# A# -
  *   row 1 (bottom): white keys  C  D  E  F  G  A  B  C   (octave A)
  * Unused positions (between E-F and B-C) stay dark.
  *
@@ -13,7 +13,7 @@
  * (cable-2 injection), to the USB-A port, or to both.
  *
  * Controls:
- *   Track buttons 1-4   channel 1-4 (only that channel)
+ *   Track buttons 1-4   select that Move track; the channel stays on Auto and follows it
  *   Left / Right        channel (Auto, 1..16) (only that channel)
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
@@ -26,7 +26,8 @@
  *                       the chosen preset, no program change is sent; From = lowest note, Prg = program change 0-127)
  *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
- *   Menu                black key layout: C# above the first pad (1) or on the second pad (2)
+ *   Menu                black key layout: C# on the second pad (2, default) or on the first pad (1,
+ *                       one more black key fits)
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
@@ -85,13 +86,14 @@ const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
 
 /* Semitone offsets within one octave's pair of rows; null = unused pad */
 const WHITE_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12];
-/* Black key layouts: 0 = C# on the first pad of the row, 1 = C# on the second pad,
-   so the black keys sit between the white keys like on a piano */
+/* Black key layouts: 0 = C# on the first pad of the row (one more black key fits),
+   1 = C# on the second pad (default), so the black keys sit between the white keys like on a piano */
 const BLACK_OFFSETS = [
     [1, 3, null, 6, 8, 10, null, 13],
     [null, 1, 3, null, 6, 8, 10, null]
 ];
 const LAYOUT_COUNT = BLACK_OFFSETS.length;
+const DEFAULT_BLACK_LAYOUT = 1;
 
 const BACK_CC = 51;
 const CAPTURE_CC = 52;
@@ -168,7 +170,7 @@ let helpOpen = false;            /* help screen shown instead of the main screen
 let helpTop = 0;                 /* first visible help line */
 let editing = false;             /* jog changes the value of selItem instead of moving the selection */
 let output = OUT_MOVE;
-let blackLayout = 0;             /* index into BLACK_OFFSETS; global, not part of a preset */
+let blackLayout = DEFAULT_BLACK_LAYOUT;             /* index into BLACK_OFFSETS; global, not part of a preset */
 let noticeLines = [];            /* message shown in place of the knob info */
 let noticeUntil = 0;
 let captureWatchUntil = 0;
@@ -197,6 +199,7 @@ let saveAt = 0;
 let refreshCursor = 0;
 let auxCursor = 0;
 let trackSyncPending = false;
+let forcedTrack = 0;             /* track 1-4 just picked with its button while in Auto; 0 = none */
 let trackSyncTries = 0;
 let trackSyncAt = 0;
 let trackReleaseCC = -1;
@@ -290,6 +293,7 @@ function padColor(padIndex) {
 }
 
 function autoChannel() {
+    if (forcedTrack) return lastAutoChannel;   /* Move has not switched to the picked track yet */
     const now = Date.now();
     if (now - lastAutoPoll < AUTO_POLL_MS) return lastAutoChannel;
     lastAutoPoll = now;
@@ -342,6 +346,7 @@ function announceItem(item) {
 }
 
 function selectSingleChannel(ch) {
+    forcedTrack = 0;
     navChannel = ch;
     autoMode = ch === 0;
     channelMask = ch === 0 ? 0 : 1 << (ch - 1);
@@ -350,7 +355,20 @@ function selectSingleChannel(ch) {
     announceItem(IT_CHANNEL);
 }
 
+/* A track button keeps the saved setting on Auto; the channel simply follows that track */
+function selectTrack(track) {
+    navChannel = 0;
+    autoMode = true;
+    channelMask = 0;
+    lastAutoChannel = track;
+    forcedTrack = typeof move_midi_inject_to_move === 'function' ? track : 0;
+    requestTrackSync();
+    scheduleSave();
+    announceItem(IT_CHANNEL);
+}
+
 function toggleChannel(index) {
+    forcedTrack = 0;
     if (autoMode) {
         autoMode = false;
         channelMask = 1 << index;
@@ -370,6 +388,7 @@ function toggleChannel(index) {
 
 /* Move track (1-4) that should be selected so its instrument gets the notes; 0 = none */
 function targetTrack() {
+    if (forcedTrack) return forcedTrack;
     if (autoMode || output === OUT_USB) return 0;
     if (navChannel >= 1 && navChannel <= 4 && (channelMask & (1 << (navChannel - 1)))) return navChannel;
     for (let ch = 1; ch <= 4; ch++) {
@@ -434,6 +453,7 @@ function syncMoveTrack() {
     if (target === 0 || (known && info.selectedTrack + 1 === target) ||
         trackSyncTries >= (known ? TRACK_MAX_TRIES : 1)) {
         trackSyncPending = false;
+        forcedTrack = 0;
         return;
     }
     trackSyncTries++;
@@ -645,7 +665,7 @@ function switchPreset(next) {
 function loadSettings() {
     for (let i = 0; i < PRESET_COUNT; i++) presets[i] = defaultPreset();
     preset = 0;
-    blackLayout = 0;
+    blackLayout = DEFAULT_BLACK_LAYOUT;
     applyPreset(presets[0]);
     if (typeof host_read_file !== 'function') return;
     try {
@@ -966,7 +986,7 @@ function handleCC(cc, value) {
     else if (cc === MoveRight) selectSingleChannel(clamp(navChannel + 1, 0, 16));
     else if (cc === MoveLeft) selectSingleChannel(clamp(navChannel - 1, 0, 16));
     else if (cc === MoveMenu) setBlackLayout((blackLayout + 1) % LAYOUT_COUNT);
-    else if (cc >= MoveRow4 && cc <= MoveRow1) selectSingleChannel(MoveRow1 - cc + 1);
+    else if (cc >= MoveRow4 && cc <= MoveRow1) selectTrack(MoveRow1 - cc + 1);
 }
 
 globalThis.onMidiMessageInternal = function (data) {
@@ -1171,6 +1191,7 @@ globalThis.init = function () {
     lastDraw = 0;
     auxCursor = 0;
     trackSyncPending = false;
+    forcedTrack = 0;
     trackReleaseCC = -1;
     trackIgnoreUntil = 0;
     overlayPlaying = readHostPlaying();
