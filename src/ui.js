@@ -83,12 +83,15 @@ const FIRST_STEP = MoveStep1;   /* step buttons 1-16 = notes 16..31 */
 const BASE_NOTE = 48;            /* lowest C at octave offset 0 */
 const FROM_MIN = 0;              /* lowest note of the keyboard */
 const FROM_MAX = 96;
-const LEDS_PER_FRAME = 12;
+const LEDS_PER_FRAME = 16;
+/* The host ticks at 500 Hz (every 2 ms); the LEDs are updated once per LED_INTERVAL_MS */
+const LED_INTERVAL_MS = 8;
 /* Move's firmware can overwrite pad LEDs when it plays the injected notes, so
-   pad LEDs are re-sent continuously: slowly at rest, faster right after a pad event */
-const REFRESH_IDLE = 1;
-const REFRESH_BOOST = 6;
-const BOOST_TICKS = 80;
+   pad LEDs are re-sent continuously: slowly at rest, faster right after a pad event
+   (per LED frame: 2 pads = the whole grid in ~130 ms; 16 pads for BOOST_FRAMES frames) */
+const REFRESH_IDLE = 2;
+const REFRESH_BOOST = 16;
+const BOOST_FRAMES = 20;
 /* Move's "Auto" MIDI-in channel plays whichever track is selected on Move, whatever the
    channel number. The module owns the track buttons, so it presses them on Move's behalf */
 const TRACK_PRESS_MS = 40;
@@ -96,7 +99,7 @@ const TRACK_RETRY_MS = 250;
 const TRACK_MAX_TRIES = 4;
 const TRACK_IGNORE_MS = 400;     /* ignore echoes of our own injected track press */
 const AUTO_POLL_MS = 30;         /* how often Move's selected track is re-read */
-const DRAW_INTERVAL_MS = 40;     /* display redraw rate cap (25 Hz) */
+const DRAW_INTERVAL_MS = 64;     /* display redraw rate cap (~16 Hz, the rate the host pushes the screen) */
 const RIGHT_COL_X = 64;          /* left edge of the Ch and Prg items: screen center */
 const ITEM_GAP = 3;              /* pixels between an item's label and value */
 const AUX_LED_COUNT = 20;        /* 16 step LEDs + 4 track button LEDs */
@@ -235,7 +238,8 @@ let trackSyncAt = 0;
 let trackReleaseCC = -1;
 let trackReleaseAt = 0;
 let trackIgnoreUntil = 0;
-let boostTicks = 0;
+let boostFrames = 0;
+let lastLedFrame = 0;
 
 const pressure = new Array(32).fill(0);   /* pad index -> latest pressure */
 const pressureSent = new Array(32).fill(0);
@@ -1195,7 +1199,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const padIndex = data[1] - FIRST_PAD;
         if (padIndex >= 0 && padIndex < 32) {
             handlePad(type, padIndex, data[2]);
-            boostTicks = BOOST_TICKS;
+            boostFrames = BOOST_FRAMES;
         }
         else if (type === MidiNoteOn && data[2] > 0 && data[1] >= FIRST_STEP && data[1] < FIRST_STEP + 16) {
             toggleChannel(data[1] - FIRST_STEP);
@@ -1224,6 +1228,10 @@ function trackColor(active, cc) {
 }
 
 function updateLeds() {
+    const now = Date.now();
+    if (now - lastLedFrame < LED_INTERVAL_MS) return;
+    lastLedFrame = now;
+
     let budget = LEDS_PER_FRAME;
     for (let i = 0; i < 32 && budget > 0; i++) {
         const color = padColor(i);
@@ -1234,8 +1242,8 @@ function updateLeds() {
         }
     }
 
-    const refreshCount = boostTicks > 0 ? REFRESH_BOOST : REFRESH_IDLE;
-    if (boostTicks > 0) boostTicks--;
+    const refreshCount = boostFrames > 0 ? REFRESH_BOOST : REFRESH_IDLE;
+    if (boostFrames > 0) boostFrames--;
     for (let n = 0; n < refreshCount; n++) {
         const color = padColor(refreshCursor);
         setLED(FIRST_PAD + refreshCursor, color, true);
@@ -1244,7 +1252,6 @@ function updateLeds() {
     }
 
     const active = activeMask();
-    const now = Date.now();
     for (let i = 0; i < 16; i++) {
         const color = stepColor(active, i, now);
         if (stepLit[i] !== color) {
