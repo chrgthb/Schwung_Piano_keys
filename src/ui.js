@@ -52,11 +52,11 @@
  */
 
 import {
-    MidiNoteOn, MidiNoteOff, MidiCC,
-    MoveShift, MoveMenu, MoveBack, MoveCapture, MoveUndo, MoveMute, MoveDelete, MoveKnob1,
+    MidiNoteOn, MidiNoteOff, MidiCC, MidiPC, MidiPolyAftertouch, MidiChAftertouch, MidiCCOn, MidiCCOff,
+    MoveShift, MoveMenu, MoveBack, MoveCapture, MoveUndo, MoveMute, MoveDelete, MoveKnob1, MoveKnob1Touch, MoveStep1,
     MoveMainKnob, MoveMainButton, MoveUp, MoveDown, MoveLeft, MoveRight,
     MoveRow1, MoveRow4, MovePlay, MoveRec,
-    MovePads, White, DarkGrey3, Black, Green, Red
+    MovePads, White, DarkGrey3, Black, Green, Red, LightMagenta, DarkMutedTeal
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 import {
@@ -71,14 +71,14 @@ import {
 } from '/data/UserData/schwung/shared/text_entry.mjs';
 
 const WHITE_KEY_COLOR = White;
-const BLACK_KEY_COLOR = 26;      /* palette #FF2BD4 (magenta) */
-const PRESSED_COLOR = 126;       /* palette #00FF00 (green) */
-const MIDI_IN_FLASH_ACTIVE = 126;   /* step LED flash on incoming notes: bright green on an active channel */
-const MIDI_IN_FLASH_IDLE = 89;      /* palette #276622 (dim green) on an inactive channel */
+const BLACK_KEY_COLOR = LightMagenta;   /* palette #FF2BD4 (magenta) */
+const PRESSED_COLOR = Green;    /* palette #00FF00 (green) */
+const MIDI_IN_FLASH_ACTIVE = Green;   /* step LED flash on incoming notes: bright green on an active channel */
+const MIDI_IN_FLASH_IDLE = DarkMutedTeal;   /* palette #276622 (dim green) on an inactive channel */
 const MIDI_IN_FLASH_MS = 100;
 
 const FIRST_PAD = MovePads[0];
-const FIRST_STEP = 16;           /* step buttons 1-16 = notes 16..31 */
+const FIRST_STEP = MoveStep1;   /* step buttons 1-16 = notes 16..31 */
 const BASE_NOTE = 48;            /* lowest C at octave offset 0 */
 const FROM_MIN = 0;              /* lowest note of the keyboard */
 const FROM_MAX = 96;
@@ -117,7 +117,7 @@ const CAPTURE_WATCH_MS = 2500;   /* after Capture, how long Move's tempo is watc
 const TEMPO_CHANGE_MIN = 0.05;   /* BPM difference counted as a changed tempo */
 const KNOB_COUNT = 8;
 const KNOB_CC_FIRST = MoveKnob1; /* MoveKnob1..MoveKnob8 = CC 71..78 */
-const KNOB_TOUCH_FIRST = 0;      /* knob touch = notes 0..7 */
+const KNOB_TOUCH_FIRST = MoveKnob1Touch;   /* knob touch = notes 0..7 */
 const KNOB_BANKS = 2;            /* Left = bank L, Right = bank R */
 const KNOB_TOTAL = KNOB_COUNT * KNOB_BANKS;
 const KNOB_BANK_NAMES = ['L', 'R'];
@@ -134,14 +134,14 @@ const AT_POLY = 1;
 const AT_CHANNEL = 2;
 const AT_CC = 3;                 /* pressure sent as a MIDI CC instead */
 const AT_NAMES = ['Off', 'Poly', 'Chan', 'CC'];
-const AT_POLY_STATUS = 0xA0;
-const AT_CHANNEL_STATUS = 0xD0;
+const AT_POLY_STATUS = MidiPolyAftertouch;
+const AT_CHANNEL_STATUS = MidiChAftertouch;
 const AT_SEND_INTERVAL_MS = 20;
 
 const OUT_MOVE = 0;
 const OUT_USB = 1;
 const OUT_NAMES = ['Move', 'USB', 'Move+USB'];
-const PROGRAM_STATUS = 0xC0;
+const PROGRAM_STATUS = MidiPC;
 
 /* Selectable display items, in jog navigation order */
 const IT_PRESET = 0;
@@ -440,13 +440,13 @@ function beginExit() {
         const order = [0, 1, 2, 3].filter(t => t !== selected).concat(selected);
         /* The Note/Session toggle (CC 50, labelled Menu in the constants) switches Move to
            Session mode; the track buttons then bring it back to Note mode with a full repaint */
-        exitSteps.push({ at, pkt: [0x0B, MidiCC, MoveMenu, 127] },
-                       { at: at + TRACK_PRESS_MS, pkt: [0x0B, MidiCC, MoveMenu, 0] });
+        exitSteps.push({ at, pkt: [0x0B, MidiCC, MoveMenu, MidiCCOn] },
+                       { at: at + TRACK_PRESS_MS, pkt: [0x0B, MidiCC, MoveMenu, MidiCCOff] });
         at += SESSION_SETTLE_MS;
         for (const t of order) {
             const cc = MoveRow1 - t;
-            exitSteps.push({ at, pkt: [0x0B, MidiCC, cc, 127] },
-                           { at: at + TRACK_PRESS_MS, pkt: [0x0B, MidiCC, cc, 0] });
+            exitSteps.push({ at, pkt: [0x0B, MidiCC, cc, MidiCCOn] },
+                           { at: at + TRACK_PRESS_MS, pkt: [0x0B, MidiCC, cc, MidiCCOff] });
             at += EXIT_TRACK_STEP_MS;
         }
     }
