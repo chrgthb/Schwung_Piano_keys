@@ -51,8 +51,9 @@
         " value is active,",
         " Shift+Jog click",
         " names the Set (the",
-        " first 5 characters",
-        " are shown)"
+        " whole name, up to",
+        " 16 characters, is",
+        " shown)"
       ]
     },
     {
@@ -99,14 +100,24 @@
         "Faster turn gives",
         " bigger steps",
         "",
-        "Shift + knob:",
-        " set the CC number",
-        " 0-127 (nothing is",
-        " sent)",
         "",
-        "Touch knob: shows",
-        " its CC number,",
-        " turning shows value"
+        "Touch knob: opens",
+        " the knob screen",
+        " while it is held",
+        " (and for 1 s after)",
+        "Jog turn: Name / Ch",
+        " / CC / Value row",
+        "Jog click: edit the",
+        " row ((editing) is",
+        " shown); touch",
+        " another knob to",
+        " edit the same row",
+        " there. Click or",
+        " Back ends editing",
+        "Name: jog click",
+        " opens the keyboard",
+        "Ch: Pad = the pad",
+        " channels, or 1-16"
       ]
     },
     {
@@ -153,7 +164,12 @@
         " default. Asks first:",
         " press Shift + X",
         " again to confirm,",
-        " Back/jog cancels"
+        " Back/jog cancels",
+        "",
+        "On the knob screen",
+        " only that knob is",
+        " reset (name, Ch,",
+        " CC, value)"
       ]
     }
   ]

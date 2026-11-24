@@ -17,7 +17,8 @@
  * Controls:
  *   Track buttons 1-4   select that Move track; the channel stays on Auto and follows it
  *   Left / Right        knob bank L / R (starts on L, back to L on a Set change); the 8 knobs
- *                       send the CCs of the active bank, shown as KnobCC-L / KnobCC-R
+ *                       send the CCs of the active bank, shown as "CC bank: Left / Right". The
+ *                       knob screen stays open on a bank change and shows the new bank's values
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit.
  *                       A note-on arriving on the external MIDI input flashes the step of its
@@ -32,24 +33,32 @@
  *                       Out = output target, AT = pad pressure: Off / Poly AT / Channel AT /
  *                       CC1 / CC2 ... CC127 (pressure sent as that CC)
  *   Shift + Jog click   with the Set item highlighted: rename the Set with Schwung's on-screen
- *                       keyboard (the first 5 characters are shown after "Set:")
+ *                       keyboard (the whole name, up to 16 characters, is shown after "Set:")
  *   Menu                black key layout: C# on the second pad (2, default) or on the first pad (1,
  *                       one more black key fits)
  *   Shift + Delete (X)  reset the active Set (name and values) to the defaults: the first press
  *                       shows a confirmation on the screen, a second Shift + Delete press resets,
- *                       Back / jog cancels. Delete alone is not used yet
+ *                       Back / jog cancels. Delete alone is not used yet. On the knob screen only
+ *                       that knob (of the shown bank) is reset: name, Ch, CC and value
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
  *   Capture / Undo      sent to Move only (not to USB); the display shows "Capture sent" (plus the
- *                       new tempo when Move's tempo changed) or "Undo sent" for a moment
+ *                       new tempo when Move's tempo changed) or "Undo sent" for a moment. Such notices
+ *                       (also Menu and Shift+Mute) take the whole screen for 2.5 s, then the screen
+ *                       that was shown before returns; a lingering knob screen gets its 1.2 s again
  *   Mute                sent to Move only (not to USB)
  *   Shift + Mute        All MIDI notes off (CC 123 on all channels) to the selected output(s)
  *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
- *   Shift + knob        reassign the knob's CC number in the active bank (nothing is sent)
- *   Knob touch          shows the CC number; turning shows CC number and value
+ *   Knob touch          the knob screen replaces the main screen while the knob is held and for 1.2 s
+ *                       after: Name / Ch / CC / Value of that knob. Jog turn picks the row, jog click
+ *                       edits it ("(editing)" top right; Name opens the name keyboard instead).
+ *                       While editing, touching another knob shows that knob and the jog keeps
+ *                       changing the same row. Back leaves editing. Ch: Pad = the channels the pads
+ *                       play on, or one fixed channel 1-16 for that knob. Names and channels are
+ *                       saved per knob and per Set
  *
- * Each of the 10 presets keeps Ch, From, Prg, Out, AT, the knob CC numbers and the knob values
+ * Each of the 10 presets keeps Ch, From, Prg, Out, AT, the knob CC numbers, names, channels and values
  * (new CC or Set reset: 64). Knob values are written to disk on a Set change or on exit, not on
  * every turn. Presets are saved to disk and restored on start.
  */
@@ -126,11 +135,18 @@ const KNOB_CC_FIRST = MoveKnob1; /* MoveKnob1..MoveKnob8 = CC 71..78 */
 const KNOB_TOUCH_FIRST = MoveKnob1Touch;   /* knob touch = notes 0..7 */
 const KNOB_BANKS = 2;            /* Left = bank L, Right = bank R */
 const KNOB_TOTAL = KNOB_COUNT * KNOB_BANKS;
-const KNOB_BANK_NAMES = ['L', 'R'];
 const KNOB_BANK_SPOKEN = ['Left', 'Right'];
 const KNOB_START_VALUE = 64;
 const DEFAULT_KNOB_CC = [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86];
 const MAX_KNOB_STEP = 8;
+const KNOB_NAME_MAX = 14;        /* characters kept of a knob name */
+/* Rows of the knob screen, in jog navigation order */
+const KR_NAME = 0;
+const KR_CH = 1;
+const KR_CC = 2;
+const KR_VALUE = 3;
+const KNOB_ROW_COUNT = 4;
+const KNOB_ROW_SPOKEN = ['Name', 'Channel', 'CC', 'Value'];
 const INFO_HOLD_MS = 1200;
 const SAVE_DELAY_MS = 800;
 const SETTINGS_DIR = '/data/UserData/schwung/piano-keys';
@@ -167,19 +183,18 @@ const HELP_LINES = [
     'Steps 1-16: multi Ch',
     'Menu: black layout',
     'Knobs 1-8: send CC',
-    'Shift+knob: set CC',
+    'Touch knob: edit it',
     'Mute: to Move',
     'Capture/Undo: to Move',
     'Shift+Mute: panic',
     'Shift+X: reset Set',
+    'Shift+X: reset knob',
     'Play/Rec: to Move',
     'Back: exit module'
 ];
 const HELP_VISIBLE = 4;
 const PRESET_COUNT = 10;
-const NAME_SHOWN = 5;            /* characters of a Set name that fit after "Set:" */
-const NAME_MAX = 16;             /* characters kept of a typed Set name */
-const NAME_SHOW_MS = 1000;       /* how long the full Set name replaces Ch: after a Set change or rename */
+const NAME_MAX = 16;             /* characters kept of a typed Set name; all of them fit after "Set:" */
 const PRESSURE_CC_MAX = 127;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const ITEM_NAMES = ['Preset', 'Channel', 'From', 'Program', 'Output', 'Aftertouch', 'Help'];
@@ -199,6 +214,7 @@ let editing = false;             /* jog changes the value of selItem instead of 
 let output = OUT_MOVE;
 let blackLayout = DEFAULT_BLACK_LAYOUT;             /* index into BLACK_OFFSETS; global, not part of a preset */
 let resetPending = false;        /* Shift + Delete pressed once: waiting for the confirming second press */
+let resetKnobSlot = -1;          /* with resetPending: knob slot to reset; -1 = the whole Set */
 let noticeLines = [];            /* message shown in place of the knob info */
 let noticeUntil = 0;
 let captureWatchUntil = 0;
@@ -210,7 +226,6 @@ let lastAutoChannel = 1;
 let moveInfoAt = 0;
 let moveInfoCache = null;
 let lastDraw = 0;
-let nameShowUntil = 0;           /* until then the full Set name is drawn in place of the Ch item */
 
 let knobBank = 0;                /* active knob bank; always starts (and returns after a Set change) on L */
 const knobCC = DEFAULT_KNOB_CC.slice();           /* bank * 8 + knob -> CC number */
@@ -219,9 +234,12 @@ const presetNames = new Array(PRESET_COUNT).fill('');   /* preset -> Set name; '
 const knobValue = new Array(KNOB_TOTAL).fill(KNOB_START_VALUE); /* bank * 8 + knob -> last sent value of the active Set */
 let knobValuesDirty = false;     /* knob values changed since the last save */
 const knobTouched = new Array(KNOB_COUNT).fill(false);
-let lastKnob = -1;
-let lastKnobAction = '';         /* 'touch' | 'turn' | 'assign' */
-let infoUntil = 0;
+const knobName = new Array(KNOB_TOTAL).fill('');  /* bank * 8 + knob -> name; '' = unnamed */
+const knobChannel = new Array(KNOB_TOTAL).fill(0); /* bank * 8 + knob -> MIDI channel 1..16; 0 = the pad channels */
+let lastKnob = -1;               /* knob shown on the knob screen */
+let knobSel = KR_VALUE;          /* highlighted row of the knob screen */
+let knobEditing = false;         /* jog changes the highlighted row instead of moving the selection */
+let infoUntil = 0;               /* the knob screen stays until then after the last touch or jog action */
 let exiting = false;
 let exitAt = 0;
 const EXIT_SETTLE_MS = 300;      /* wait after the last track press so Move's repaint reaches the hardware */
@@ -670,7 +688,8 @@ function defaultPreset() {
     return {
         autoMode: true, navChannel: 0, channelMask: 0, fromNote: BASE_NOTE, program: 0,
         output: OUT_MOVE, pressureMode: AT_POLY, pressureCC: 1, knobCC: DEFAULT_KNOB_CC.slice(),
-        knobValue: new Array(KNOB_TOTAL).fill(KNOB_START_VALUE)
+        knobValue: new Array(KNOB_TOTAL).fill(KNOB_START_VALUE),
+        knobName: new Array(KNOB_TOTAL).fill(''), knobChannel: new Array(KNOB_TOTAL).fill(0)
     };
 }
 
@@ -678,7 +697,8 @@ function defaultPreset() {
 function snapshotPreset() {
     return {
         autoMode, navChannel, channelMask, fromNote, program, output, pressureMode, pressureCC,
-        knobCC: knobCC.slice(), knobValue: knobValue.slice()
+        knobCC: knobCC.slice(), knobValue: knobValue.slice(),
+        knobName: knobName.slice(), knobChannel: knobChannel.slice()
     };
 }
 
@@ -709,6 +729,10 @@ function sanitizePreset(raw) {
         if (Array.isArray(raw.knobValue) && Number.isInteger(raw.knobValue[i])) {
             p.knobValue[i] = clamp(raw.knobValue[i], 0, 127);
         }
+        if (Array.isArray(raw.knobName)) p.knobName[i] = cleanKnobName(raw.knobName[i]);
+        if (Array.isArray(raw.knobChannel) && Number.isInteger(raw.knobChannel[i])) {
+            p.knobChannel[i] = clamp(raw.knobChannel[i], 0, 16);
+        }
     }
     return p;
 }
@@ -725,6 +749,8 @@ function applyPreset(p) {
     for (let i = 0; i < KNOB_TOTAL; i++) {
         knobCC[i] = p.knobCC[i];
         knobValue[i] = p.knobValue[i];
+        knobName[i] = p.knobName[i];
+        knobChannel[i] = p.knobChannel[i];
     }
 }
 
@@ -732,14 +758,13 @@ function cleanName(raw) {
     return typeof raw === 'string' ? raw.trim().slice(0, NAME_MAX) : '';
 }
 
-/* Value shown after "Set:": the first characters of the name, or the preset number */
-function presetLabel(full) {
-    if (!presetNames[preset]) return String(preset);
-    return full ? presetNames[preset] : presetNames[preset].slice(0, NAME_SHOWN);
+function cleanKnobName(raw) {
+    return typeof raw === 'string' ? raw.trim().slice(0, KNOB_NAME_MAX) : '';
 }
 
-function showFullName() {
-    if (presetNames[preset].length > NAME_SHOWN) nameShowUntil = Date.now() + NAME_SHOW_MS;
+/* Value shown after "Set:": the name, or the preset number */
+function presetLabel() {
+    return presetNames[preset] || String(preset);
 }
 
 function presetSpeech() {
@@ -756,7 +781,6 @@ function renamePreset() {
         padSelect: false,   /* the pads keep their own LEDs; only the jog types */
         onConfirm: (text) => {
             presetNames[index] = cleanName(text);
-            showFullName();
             scheduleSave();
             announce(presetNames[index] ? `Preset ${index} named ${presetNames[index]}` : `Preset ${index} name cleared`);
         },
@@ -767,27 +791,56 @@ function renamePreset() {
 
 function askResetPreset() {
     resetPending = true;
+    resetKnobSlot = -1;
     editing = false;
     announce(`Reset Set ${presetSpeech()} to defaults? Press Shift plus Delete again to confirm, Back to cancel`);
+}
+
+/* Shift + Delete on the knob screen: only the shown knob (of the bank shown) is reset */
+function askResetKnob() {
+    resetPending = true;
+    resetKnobSlot = knobSlot(lastKnob);
+    knobEditing = false;
+    announce(`Reset knob ${lastKnob + 1}, bank ${KNOB_BANK_SPOKEN[knobBank]}, to defaults? ` +
+        'Press Shift plus Delete again to confirm, Back to cancel');
 }
 
 function cancelResetPreset() {
     if (!resetPending) return false;
     resetPending = false;
+    resetKnobSlot = -1;
     announce('Reset cancelled');
     return true;
+}
+
+/* Name, channel, CC and value of one knob back to the defaults; nothing is sent */
+function resetKnob() {
+    const slot = resetKnobSlot;
+    resetPending = false;
+    resetKnobSlot = -1;
+    knobName[slot] = '';
+    knobChannel[slot] = 0;
+    knobCC[slot] = DEFAULT_KNOB_CC[slot];
+    knobValue[slot] = KNOB_START_VALUE;
+    scheduleSave();
+    const knob = slot % KNOB_COUNT;
+    if (slot >= knobBank * KNOB_COUNT && slot < (knobBank + 1) * KNOB_COUNT) {
+        lastKnob = knob;
+        holdKnobScreen();
+    }
+    announce(`Knob ${knob + 1}, bank ${KNOB_BANK_SPOKEN[Math.floor(slot / KNOB_COUNT)]}, reset to defaults`);
 }
 
 /* Active preset back to the defaults: name, channel, From, Prg, Out, AT and knob CC numbers */
 function resetPreset() {
     resetPending = false;
+    resetKnobSlot = -1;
     releaseAll();
     presetNames[preset] = '';
     applyPreset(defaultPreset());
     clearPressure();
-    lastKnob = -1;
+    closeKnobScreen();
     knobBank = 0;
-    nameShowUntil = 0;
     requestTrackSync();
     scheduleSave();
     announce(`Set ${preset} reset to defaults. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
@@ -803,9 +856,8 @@ function switchPreset(next) {
     preset = next;
     applyPreset(presets[preset]);
     clearPressure();
-    lastKnob = -1;
+    closeKnobScreen();
     knobBank = 0;
-    showFullName();
     requestTrackSync();
     scheduleSave();
     announce(`Preset ${presetSpeech()}. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
@@ -862,21 +914,45 @@ function knobSlot(knob) {
     return knobBank * KNOB_COUNT + knob;
 }
 
+function closeKnobScreen() {
+    lastKnob = -1;
+    knobEditing = false;
+    infoUntil = 0;
+}
+
+/* The knob screen, if shown, stays: it then shows the same knob of the new bank, and an
+   edit in progress carries on there. Changes of the old bank are queued for saving */
 function setKnobBank(bank) {
     if (bank === knobBank) return;
     knobBank = bank;
-    lastKnob = -1;
-    infoUntil = 0;
+    if (knobValuesDirty) scheduleSave();
+    if (knobScreenActive()) holdKnobScreen();
     announce(`Knob bank ${KNOB_BANK_SPOKEN[bank]}`);
+    if (knobScreenActive()) announceKnobRow();
 }
 
-function showKnobInfo(knob, action) {
+/* The knob screen replaces the main screen while a knob is touched or being edited, and for
+   INFO_HOLD_MS after the last touch or jog action there; help and the reset question win */
+function knobScreenActive() {
+    if (lastKnob < 0 || helpOpen || resetPending || isTextEntryActive()) return false;
+    return knobTouched[lastKnob] || knobEditing || Date.now() < infoUntil;
+}
+
+function holdKnobScreen() {
+    infoUntil = Date.now() + INFO_HOLD_MS;
+}
+
+function knobChannelText(slot) {
+    return knobChannel[slot] ? String(knobChannel[slot]) : 'Pad';
+}
+
+function showKnobInfo(knob) {
     const slot = knobSlot(knob);
     lastKnob = knob;
-    lastKnobAction = action;
-    infoUntil = Date.now() + INFO_HOLD_MS;
-    if (action === 'assign') announce(`Knob ${knob + 1} assigned to CC ${knobCC[slot]}`);
-    else announce(`Knob ${knob + 1}, CC ${knobCC[slot]}, value ${knobValue[slot]}`);
+    holdKnobScreen();
+    const name = knobName[slot] ? `${knobName[slot]}, ` : '';
+    const ch = knobChannel[slot] ? `, channel ${knobChannel[slot]}` : '';
+    announce(`Knob ${knob + 1}, ${name}CC ${knobCC[slot]}${ch}, value ${knobValue[slot]}`);
 }
 
 /* Relative encoder value -> signed step; speed is encoded in the magnitude */
@@ -885,38 +961,108 @@ function knobStep(value) {
     return clamp(raw, -MAX_KNOB_STEP, MAX_KNOB_STEP);
 }
 
-function handleKnob(knob, value) {
-    const slot = knobSlot(knob);
-    if (shiftHeld) {
-        const delta = decodeDelta(value);
-        if (delta === 0) return;
-        const cc = clamp(knobCC[slot] + delta, 0, 127);
-        if (cc !== knobCC[slot]) {
-            knobCC[slot] = cc;
-            knobValue[slot] = KNOB_START_VALUE;   /* a new CC starts from the middle */
-            knobValuesDirty = true;
-        }
-        showKnobInfo(knob, 'assign');
-        scheduleSave();
-        return;
-    }
+/* A knob's own channel when it has one, otherwise the channels the pads play on */
+function sendKnobValue(slot) {
+    const chs = knobChannel[slot] ? [knobChannel[slot]] : currentChannels();
+    sendOnChannels(MidiCC, chs, knobCC[slot], knobValue[slot]);
+}
 
+function setKnobValue(slot, next) {
+    if (next === knobValue[slot]) return;
+    knobValue[slot] = next;
+    knobValuesDirty = true;   /* written with the next save, a Set change or on exit; no write per turn */
+    sendKnobValue(slot);
+}
+
+function setKnobCC(slot, cc) {
+    if (cc === knobCC[slot]) return;
+    knobCC[slot] = cc;
+    knobValue[slot] = KNOB_START_VALUE;   /* a new CC starts from the middle */
+    knobValuesDirty = true;
+}
+
+function handleKnob(knob, value) {
     const step = knobStep(value);
     if (step === 0) return;
-    const next = clamp(knobValue[slot] + step, 0, 127);
-    const changed = next !== knobValue[slot];
-    knobValue[slot] = next;
-    showKnobInfo(knob, 'turn');
-    if (!changed) return;
-    knobValuesDirty = true;   /* written with the next save, a Set change or on exit; no write per turn */
-    sendOnChannels(MidiCC, currentChannels(), knobCC[slot], next);
+    const slot = knobSlot(knob);
+    setKnobValue(slot, clamp(knobValue[slot] + step, 0, 127));
+    showKnobInfo(knob);
 }
 
 function handleKnobTouch(knob, touched) {
     knobTouched[knob] = touched;
-    if (touched) showKnobInfo(knob, 'touch');
+    if (touched) {
+        /* Moving on to another knob: what the previous one holds is already in the arrays;
+           make sure it reaches the disk */
+        if (knobValuesDirty) scheduleSave();
+        showKnobInfo(knob);
+        return;
+    }
+    if (knob !== lastKnob) return;
     /* A release must not steal the display from a knob touched since */
-    else if (knob === lastKnob) infoUntil = Date.now() + INFO_HOLD_MS;
+    const other = knobTouched.indexOf(true);
+    if (other >= 0) showKnobInfo(other);
+    else holdKnobScreen();
+}
+
+function announceKnobRow(prefix = '') {
+    const slot = knobSlot(lastKnob);
+    const values = [knobName[slot] || 'no name', knobChannelText(slot) === 'Pad' ? 'pad channels' : knobChannelText(slot),
+        String(knobCC[slot]), String(knobValue[slot])];
+    announce(`${prefix}${KNOB_ROW_SPOKEN[knobSel]}: ${values[knobSel]}`);
+}
+
+function knobJogTurn(delta) {
+    holdKnobScreen();
+    const slot = knobSlot(lastKnob);
+    if (!knobEditing) {
+        knobSel = clamp(knobSel + delta, 0, KNOB_ROW_COUNT - 1);
+        announceKnobRow();
+        return;
+    }
+    if (knobSel === KR_CH) {
+        knobChannel[slot] = clamp(knobChannel[slot] + delta, 0, 16);
+    } else if (knobSel === KR_CC) {
+        setKnobCC(slot, clamp(knobCC[slot] + delta, 0, 127));
+    } else if (knobSel === KR_VALUE) {
+        setKnobValue(slot, clamp(knobValue[slot] + delta, 0, 127));
+    }
+    if (knobSel !== KR_VALUE) scheduleSave();   /* values wait for the next save, a Set change or exit */
+    announceKnobRow();
+}
+
+function knobJogClick() {
+    holdKnobScreen();
+    if (knobSel === KR_NAME) {
+        renameKnob(lastKnob);
+        return;
+    }
+    knobEditing = !knobEditing;
+    if (knobEditing) announceKnobRow('Editing ');
+    else announceKnobRow();
+}
+
+function renameKnob(knob) {
+    const slot = knobSlot(knob);
+    releaseAll();
+    clearPressure();
+    knobTouched.fill(false);   /* touch events are not tracked while the name keyboard is open */
+    openTextEntry({
+        title: `Knob ${knob + 1} name`,
+        initialText: knobName[slot],
+        padSelect: false,
+        onConfirm: (text) => {
+            knobName[slot] = cleanKnobName(text);
+            scheduleSave();
+            holdKnobScreen();
+            announce(knobName[slot] ? `Knob ${knob + 1} named ${knobName[slot]}` : `Knob ${knob + 1} name cleared`);
+        },
+        onCancel: () => {
+            holdKnobScreen();
+            announceKnobRow();
+        },
+        onAnnounce: announce
+    });
 }
 
 function setPressure(mode, cc) {
@@ -943,8 +1089,11 @@ function setBlackLayout(next) {
 }
 
 function showNotice(lines, ms) {
+    const until = Date.now() + (ms || NOTICE_MS);
+    /* A knob screen that is only lingering (no touch, no edit) gets its follow-up time after the notice */
+    if (knobScreenActive() && !knobEditing && !knobTouched[lastKnob]) infoUntil = Math.max(infoUntil, until + INFO_HOLD_MS);
     noticeLines = lines;
-    noticeUntil = Date.now() + (ms || NOTICE_MS);
+    noticeUntil = until;
 }
 
 function moveTempo() {
@@ -1074,6 +1223,10 @@ function handleCC(cc, value) {
        Shift + jog click renames the Set; with Vol touched it is Schwung's exit combo */
     if (cc === MoveMainButton) {
         if (value > 0 && cancelResetPreset()) return;
+        if (knobScreenActive()) {
+            if (value > 0 && !shiftHeld) knobJogClick();
+            return;
+        }
         if (value > 0 && shiftHeld) {
             if (!helpOpen && selItem === IT_PRESET) renamePreset();
         } else if (value > 0) {
@@ -1100,6 +1253,10 @@ function handleCC(cc, value) {
         const delta = decodeDelta(value);
         if (delta === 0) return;
         if (cancelResetPreset()) return;
+        if (knobScreenActive()) {
+            knobJogTurn(delta);
+            return;
+        }
         if (helpOpen) {
             helpTop = clamp(helpTop + delta, 0, HELP_LINES.length - HELP_VISIBLE);
             announce(HELP_LINES[helpTop]);
@@ -1143,8 +1300,14 @@ function handleCC(cc, value) {
 
     if (cc === MoveDelete) {
         if (!shiftHeld || helpOpen) return;
-        if (resetPending) resetPreset();
-        else askResetPreset();
+        if (resetPending) {
+            if (resetKnobSlot >= 0) resetKnob();
+            else resetPreset();
+        } else if (knobScreenActive()) {
+            askResetKnob();
+        } else {
+            askResetPreset();
+        }
         return;
     }
 
@@ -1152,6 +1315,13 @@ function handleCC(cc, value) {
 
     if (cc === MoveBack && helpOpen) {
         helpOpen = false;
+        return;
+    }
+
+    if (cc === MoveBack && knobEditing && knobScreenActive()) {
+        knobEditing = false;
+        holdKnobScreen();
+        announceKnobRow();
         return;
     }
 
@@ -1289,25 +1459,17 @@ function updateLeds() {
 
 /* Widths of the fixed strings, measured on first use (text_width is only available at runtime) */
 let fixedWidths = null;
-const numberWidths = [];         /* 0..127 -> width of its decimal text */
 const labelWidths = new Map();   /* item label -> width */
 
 function widths() {
     if (!fixedWidths) {
         fixedWidths = {
-            cell: text_width('000 '),
-            digits: text_width('000'),
             help: text_width('[Help]'),
-            chFree: 126 - (RIGHT_COL_X + text_width('Ch:') + ITEM_GAP),
-            knobFirstX: KNOB_BANK_NAMES.map(name => 2 + text_width(`KnobCC-${name}: `))
+            setFree: 126 - (2 + text_width('Set:') + ITEM_GAP),
+            chFree: 126 - (2 + text_width('Ch:') + ITEM_GAP)
         };
     }
     return fixedWidths;
-}
-
-function numberWidth(n) {
-    if (numberWidths[n] === undefined) numberWidths[n] = text_width(String(n));
-    return numberWidths[n];
 }
 
 function labelWidth(label) {
@@ -1319,44 +1481,35 @@ function labelWidth(label) {
     return w;
 }
 
-/* All knob CC numbers in 3-digit right-aligned cells: knobs 1-3 after the label on the
-   first line, knobs 4-8 on the second line, the last three under the first three */
-function drawKnobCCList() {
-    const { cell, digits, knobFirstX } = widths();
-    const firstX = knobFirstX[knobBank];
-    const topCount = 3;
-    const drawCell = (knob, x, y) => {
-        const cc = knobCC[knobSlot(knob)];
-        print(x + digits - numberWidth(cc), y, String(cc), 1);
-    };
-
-    print(2, 40, `KnobCC-${KNOB_BANK_NAMES[knobBank]}: `, 1);
-    for (let k = 0; k < KNOB_COUNT; k++) {
-        if (k < topCount) drawCell(k, firstX + k * cell, 40);
-        else drawCell(k, firstX + (k - KNOB_COUNT + topCount) * cell, 50);
-    }
+/* Bottom row of the main screen: the rename hint or the active knob bank */
+function drawBottomInfo() {
+    if (selItem === IT_PRESET && editing) print(2, 50, 'Shift+Click: rename', 1);
+    else print(2, 50, `CC bank: ${KNOB_BANK_SPOKEN[knobBank]}`, 1);
 }
 
-function drawKnobInfo() {
-    if (Date.now() < noticeUntil) {
-        print(2, 40, noticeLines[0], 1);
-        if (noticeLines[1]) print(2, 50, noticeLines[1], 1);
-        return;
+/* "Label: value" row of the knob screen; same highlighting as drawItem */
+function drawKnobRow(row, y, label, value) {
+    const labelW = labelWidth(label);
+    const selected = knobSel === row;
+    drawText(2, y, label, selected && !knobEditing);
+    const left = 2 + labelW + ITEM_GAP;
+    let shown = value;
+    while (shown.length > 1 && left + text_width(shown) > 126) shown = shown.slice(0, -1);
+    drawText(left, y, shown, selected && knobEditing && row !== KR_NAME);
+}
+
+function drawKnobScreen() {
+    const slot = knobSlot(lastKnob);
+    print(2, 0, `Knob ${lastKnob + 1}`, 1);
+    if (knobEditing) {
+        const text = '(editing)';
+        print(126 - text_width(text), 0, text, 1);
     }
-    const active = lastKnob >= 0 && (knobTouched[lastKnob] || Date.now() < infoUntil);
-    if (!active && selItem === IT_PRESET && editing) {
-        print(2, 40, 'Shift+Jog click:', 1);
-        print(2, 50, 'rename this Set', 1);
-        return;
-    }
-    if (!active) {
-        drawKnobCCList();
-        return;
-    }
-    print(2, 40, `Knob ${lastKnob + 1}: CC ${knobCC[knobSlot(lastKnob)]}`, 1);
-    if (lastKnobAction === 'turn') print(2, 50, `Value: ${knobValue[knobSlot(lastKnob)]}`, 1);
-    else if (lastKnobAction === 'assign') print(2, 50, 'CC assigned', 1);
-    else print(2, 50, shiftHeld ? 'Turn to set CC' : 'Shift+knob: set CC', 1);
+    drawKnobRow(KR_NAME, 10, 'Name:', knobName[slot] || '-');
+    drawKnobRow(KR_CH, 20, 'Ch:', knobChannelText(slot));
+    drawKnobRow(KR_CC, 30, 'CC:', String(knobCC[slot]));
+    drawKnobRow(KR_VALUE, 40, 'Value:', String(knobValue[slot]));
+    print(2, 50, `CC bank: ${KNOB_BANK_SPOKEN[knobBank]}`, 1);
 }
 
 /* Text, inverted (white box, black text) when highlighted */
@@ -1390,8 +1543,14 @@ function drawHelp() {
 }
 
 function drawResetConfirm() {
-    print(2, 0, `Reset Set ${presetLabel(false)}?`, 1);
-    print(2, 14, 'Name and values go', 1);
+    if (resetKnobSlot >= 0) {
+        const bank = Math.floor(resetKnobSlot / KNOB_COUNT);
+        print(2, 0, `Reset Knob ${resetKnobSlot % KNOB_COUNT + 1} ${KNOB_BANK_SPOKEN[bank]}?`, 1);
+        print(2, 14, 'Name, Ch, CC, value', 1);
+    } else {
+        print(2, 0, `Reset Set ${preset}?`, 1);
+        print(2, 14, 'Name and values go', 1);
+    }
     print(2, 24, 'back to defaults.', 1);
     print(2, 40, 'Shift+X again: reset', 1);
     print(2, 52, 'Back/jog: cancel', 1);
@@ -1406,6 +1565,13 @@ function drawUI() {
         drawTextEntry();
         return;
     }
+    /* A notice (Capture, Undo, ...) takes the whole screen; the screen underneath is untouched
+       and comes back when the notice ends */
+    if (Date.now() < noticeUntil) {
+        const top = noticeLines[1] ? 20 : 26;
+        noticeLines.forEach((line, i) => print(Math.max(0, (128 - text_width(line)) >> 1), top + i * 12, line, 1));
+        return;
+    }
     if (helpOpen) {
         drawHelp();
         return;
@@ -1414,24 +1580,27 @@ function drawUI() {
         drawResetConfirm();
         return;
     }
+    if (knobScreenActive()) {
+        drawKnobScreen();
+        return;
+    }
     const chs = currentChannels();
     print(2, 0, 'Piano Keys', 1);
-    const { help, chFree } = widths();
+    const { help, setFree, chFree } = widths();
     drawText(126 - help, 0, '[Help]', selItem === IT_HELP);
 
-    /* Ch and Prg labels start at the screen center, so they never move. The channel list
-       becomes "multi" when the numbers do not fit next to the label */
+    /* The channel list becomes "multi" when the numbers do not fit next to the label */
     let chText = autoMode ? `Auto ${chs[0]}` : chs.join(',');
-    if (autoMode && text_width(chText) > chFree) chText = `A${chs[0]}`;
-    else if (text_width(chText) > chFree) chText = 'multi';
-    const fullName = Date.now() < nameShowUntil;
-    drawItem(IT_PRESET, 2, 10, 'Set:', presetLabel(fullName));
-    if (!fullName) drawItem(IT_CHANNEL, RIGHT_COL_X, 10, 'Ch:', chText);
-    drawItem(IT_FROM, 2, 20, 'From:', noteName(fromNote));
-    drawItem(IT_PROGRAM, RIGHT_COL_X, 20, 'Prg:', String(program));
-    drawItem(IT_OUT, 2, 30, 'Out:', OUT_NAMES[output]);
-    drawItem(IT_AT, -2, 30, 'AT:', pressureText());
-    drawKnobInfo();
+    if (text_width(chText) > chFree) chText = 'multi';
+    let setText = presetLabel();
+    while (setText.length > 1 && text_width(setText) > setFree) setText = setText.slice(0, -1);
+    drawItem(IT_PRESET, 2, 10, 'Set:', setText);
+    drawItem(IT_CHANNEL, 2, 20, 'Ch:', chText);
+    drawItem(IT_FROM, 2, 30, 'From:', noteName(fromNote));
+    drawItem(IT_PROGRAM, RIGHT_COL_X, 30, 'Prg:', String(program));
+    drawItem(IT_OUT, 2, 40, 'Out:', OUT_NAMES[output]);
+    drawItem(IT_AT, -2, 40, 'AT:', pressureText());
+    drawBottomInfo();
 }
 
 /* Stops Move's firmware from repainting the pads with its own in-key/chromatic colors */
@@ -1471,15 +1640,16 @@ globalThis.init = function () {
     exitAt = 0;
     exitSteps = [];
     shiftHeld = false;
-    nameShowUntil = 0;
     closeTextEntry();
     selItem = IT_PRESET;
     editing = false;
     helpOpen = false;
     helpTop = 0;
     resetPending = false;
+    resetKnobSlot = -1;
     knobTouched.fill(false);
-    lastKnob = -1;
+    closeKnobScreen();
+    knobSel = KR_VALUE;
     knobBank = 0;
     loadSettings();
     autoChannel();
