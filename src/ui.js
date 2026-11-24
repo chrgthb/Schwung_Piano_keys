@@ -38,16 +38,17 @@
  *                       one more black key fits)
  *   Shift + Delete (X)  reset the active Set (name and values) to the defaults: the first press
  *                       shows a confirmation on the screen, a second Shift + Delete press resets,
- *                       Back / jog cancels. Delete alone is not used yet. On the knob screen only
+ *                       Back / jog cancels. On the knob screen only
  *                       that knob (of the shown bank) is reset: name, Ch, CC and value
  *   Back                exit the module
  *   Play / Record       passed through to Move (module.json button_passthrough 85, 86); their LEDs
  *                       follow the transport state tracked by the module
  *   Capture / Undo      sent to Move only (not to USB); the display shows "Capture sent" (plus the
  *                       new tempo when Move's tempo changed) or "Undo sent" for a moment. Such notices
- *                       (also Menu and Shift+Mute) take the whole screen for 2.5 s, then the screen
+ *                       (also Mute, Delete, Menu and Shift+Mute) take the whole screen for 2.5 s, then the screen
  *                       that was shown before returns; a lingering knob screen gets its 1.2 s again
- *   Mute                sent to Move only (not to USB)
+ *   Mute                sent to Move only (not to USB); the display shows "Mute/unmute sent"
+ *   Delete (X)          without Shift sent to Move only (not to USB); the display shows "Delete sent"
  *   Shift + Mute        All MIDI notes off (CC 123 on all channels) to the selected output(s)
  *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
  *   Knob touch          the knob screen replaces the main screen while the knob is held and for 1.2 s
@@ -184,7 +185,7 @@ const HELP_LINES = [
     'Menu: black layout',
     'Knobs 1-8: send CC',
     'Touch knob: edit it',
-    'Mute: to Move',
+    'Mute/X: to Move',
     'Capture/Undo: to Move',
     'Shift+Mute: panic',
     'Shift+X: reset Set',
@@ -1285,8 +1286,32 @@ function handleCC(cc, value) {
     }
 
     if (cc === MoveMute) {
-        if (value > 0 && shiftHeld) allNotesOff();
-        else forwardToMove(cc, value);
+        if (value > 0 && shiftHeld) {
+            allNotesOff();
+        } else if (forwardToMove(cc, value) && value > 0) {
+            showNotice(['Mute/unmute sent']);
+            announce('Mute/unmute sent');
+        }
+        return;
+    }
+
+    /* Delete without Shift goes to Move (its release too); Shift + Delete resets */
+    if (cc === MoveDelete) {
+        if (value === 0 || !shiftHeld) {
+            if (forwardToMove(cc, value) && value > 0) {
+                showNotice(['Delete sent']);
+                announce('Delete sent');
+            }
+        } else if (!helpOpen) {
+            if (resetPending) {
+                if (resetKnobSlot >= 0) resetKnob();
+                else resetPreset();
+            } else if (knobScreenActive()) {
+                askResetKnob();
+            } else {
+                askResetPreset();
+            }
+        }
         return;
     }
 
@@ -1295,19 +1320,6 @@ function handleCC(cc, value) {
     if (cc === MovePlay || cc === MoveRec) {
         handleTransportButton(cc);
         updateTransportLeds(true);
-        return;
-    }
-
-    if (cc === MoveDelete) {
-        if (!shiftHeld || helpOpen) return;
-        if (resetPending) {
-            if (resetKnobSlot >= 0) resetKnob();
-            else resetPreset();
-        } else if (knobScreenActive()) {
-            askResetKnob();
-        } else {
-            askResetPreset();
-        }
         return;
     }
 
