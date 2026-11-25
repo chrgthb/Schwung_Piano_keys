@@ -8,20 +8,22 @@
  *   row 1 (bottom): white keys  C  D  E  F  G  A  B  C   (octave A)
  * Unused positions (between E-F and B-C) stay dark.
  *
- * Notes are sent on one or more chosen MIDI channels (or, with Ch = Track, on the channel of the
- * track selected on Move) to Move's own tracks (cable-2 injection), to the USB-A port, or to both.
- * With Ch = Track nothing is sent to USB (the channel Move itself sends on is not known).
+ * Notes are sent on one or more chosen MIDI channels (or, with Ch = Auto, on the channel of the
+ * track selected on Move: track N = channel N) to Move's own tracks (cable-2 injection), to the
+ * USB-A port, or to both. The track is only ever changed with the track buttons, never by a
+ * channel setting.
  * On start the selected track's button is pressed on Move's behalf, so Move leaves
  * Session mode and enters Note mode on that track.
  *
  * Controls:
- *   Track buttons 1-4   select that Move track; the channel stays on Track and follows it;
- *                       the selected Move track's LED is green
+ *   Track buttons 1-4   select that Move track (its LED is green). With Ch = Auto the channel
+ *                       follows the track; with fixed channels they stay as set
  *   Left / Right        knob bank L / R (starts on L, back to L on a Set change); the 8 knobs
  *                       send the CCs of the active bank, shown as "CC bank: Left / Right". The
  *                       knob screen stays open on a bank change and shows the new bank's values
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
- *                       notes, aftertouch and knob CCs. Active steps are lit (none in Track mode).
+ *                       notes, aftertouch and knob CCs. Active steps are lit (with Ch = Auto the
+ *                       step of the selected track's channel).
  *                       A note-on arriving on the external MIDI input flashes the step of its
  *                       channel green (bright on an active step, dim on an inactive one).
  *   Up / Down           octave (lowest note shifts by 12)
@@ -182,7 +184,7 @@ const NAV_ORDER = [IT_HELP, IT_PRESET, IT_CHANNEL, IT_FROM, IT_PROGRAM, IT_OUT, 
 const HELP_LINES = [
     'Up/Down: octave',
     'Left/Right: knob bank',
-    'Tracks 1-4: channel',
+    'Tracks 1-4: track',
     'Steps 1-16: multi Ch',
     'Menu: black layout',
     'Knobs 1-8: send CC',
@@ -205,9 +207,9 @@ const OUT_SPOKEN = ['Move', 'USB', 'Move and USB'];
 const AT_SPOKEN = ['Off', 'Polyphonic', 'Channel'];
 
 let preset = 0;                  /* active preset 0..9 */
-let navChannel = 0;              /* jog / step button position: 0 = Move, 1..16 */
-let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Track mode */
-let autoMode = true;             /* Ch = Track: follow the selected Move track, nothing goes to USB */
+let navChannel = 0;              /* jog / step button position: 0 = Auto, 1..16 */
+let channelMask = 0;             /* bit n = MIDI channel n+1; ignored in Auto mode */
+let autoMode = true;             /* Ch = Auto: channel = the track selected on Move (track N = channel N) */
 let fromNote = BASE_NOTE;        /* note of the lowest C key */
 let program = 0;                 /* last program change value sent */
 let selItem = IT_CHANNEL;        /* highlighted item */
@@ -255,7 +257,7 @@ let refreshCursor = 0;
 let auxCursor = 0;
 const midiInFlashUntil = new Array(16).fill(0);   /* channel 0-15 -> end of its step LED flash */
 let trackSyncPending = false;
-let forcedTrack = 0;             /* track 1-4 just picked with its button while in Track mode; 0 = none */
+let forcedTrack = 0;             /* track 1-4 just picked with its button, not yet selected on Move; 0 = none */
 let trackSyncTries = 0;
 let trackSyncAt = 0;
 let trackReleaseCC = -1;
@@ -268,7 +270,6 @@ const pressure = new Array(32).fill(0);   /* pad index -> latest pressure */
 const pressureSent = new Array(32).fill(0);
 let channelSent = 0;
 let channelSentMask = 0;
-let channelSentUsbMask = 0;
 let channelSentCC = null;        /* CC used for the last send; null = channel pressure */
 let lastPressureSend = 0;
 let pressureDirty = false;
@@ -397,7 +398,7 @@ function currentChannels() {
 }
 
 function activeMask() {
-    return autoMode ? 0 : channelMask;   /* Track mode: no step is lit, the track button shows the choice */
+    return autoMode ? 1 << (autoChannel() - 1) : channelMask;
 }
 
 function maskOf(chs) {
@@ -406,7 +407,7 @@ function maskOf(chs) {
 
 function channelSpeech() {
     const chs = currentChannels();
-    return autoMode ? `Track ${chs[0]}` : chs.join(', ');
+    return autoMode ? 'Auto' : chs.join(', ');
 }
 
 function itemSpeech(item) {
@@ -426,29 +427,23 @@ function announceItem(item) {
 }
 
 function selectSingleChannel(ch) {
-    forcedTrack = 0;
     navChannel = ch;
     autoMode = ch === 0;
     channelMask = ch === 0 ? 0 : 1 << (ch - 1);
-    requestTrackSync();
     scheduleSave();
     announceItem(IT_CHANNEL);
 }
 
-/* A track button keeps the saved setting on Auto; the channel simply follows that track */
+/* Selects the track on Move; the channel setting is left alone (with Auto it follows the track) */
 function selectTrack(track) {
-    navChannel = 0;
-    autoMode = true;
-    channelMask = 0;
     lastAutoChannel = track;
     forcedTrack = typeof move_midi_inject_to_move === 'function' ? track : 0;
     requestTrackSync();
-    scheduleSave();
-    announceItem(IT_CHANNEL);
+    if (autoMode) announceItem(IT_CHANNEL);
+    else announce(`Track ${track}`);
 }
 
 function toggleChannel(index) {
-    forcedTrack = 0;
     if (autoMode) {
         autoMode = false;
         channelMask = 1 << index;
@@ -461,20 +456,13 @@ function toggleChannel(index) {
         channelMask = next;
     }
     navChannel = index + 1;
-    requestTrackSync();
     scheduleSave();
     announce(`Channel ${index + 1} ${channelMask & (1 << index) ? 'on' : 'off'}`);
 }
 
-/* Move track (1-4) that should be selected so its instrument gets the notes; 0 = none */
+/* Move track (1-4) to select: only one picked with a track button, never derived from the channels; 0 = none */
 function targetTrack() {
-    if (forcedTrack) return forcedTrack;
-    if (autoMode || output === OUT_USB) return 0;
-    if (navChannel >= 1 && navChannel <= 4 && (channelMask & (1 << (navChannel - 1)))) return navChannel;
-    for (let ch = 1; ch <= 4; ch++) {
-        if (channelMask & (1 << (ch - 1))) return ch;
-    }
-    return 0;
+    return forcedTrack;
 }
 
 function requestTrackSync() {
@@ -555,22 +543,17 @@ function syncMoveTrack() {
 }
 
 /* Send a channel message on every channel in chs */
-function sendOnChannels(statusHigh, chs, d1, d2, usb = true) {
-    for (const ch of chs) sendMidi(statusHigh | (ch - 1), d1, d2, usb);
-}
-
-/* In Track mode (Ch = Track) nothing goes to USB: the channel the Move track itself sends on is not known */
-function usbAllowed() {
-    return !autoMode;
+function sendOnChannels(statusHigh, chs, d1, d2) {
+    for (const ch of chs) sendMidi(statusHigh | (ch - 1), d1, d2);
 }
 
 /* Send a 3-byte channel message to the selected output(s), on cable 2 */
-function sendMidi(status, d1, d2, usb = true) {
+function sendMidi(status, d1, d2) {
     const packet = [0x20 | (status >> 4), status, d1, d2];
     if (output !== OUT_USB && typeof move_midi_inject_to_move === 'function') {
         move_midi_inject_to_move(packet);
     }
-    if (usb && output !== OUT_MOVE) {
+    if (output !== OUT_MOVE) {
         move_midi_external_send(packet);
     }
 }
@@ -580,7 +563,7 @@ function noteName(note) {
 }
 
 function noteOff(entry) {
-    sendOnChannels(MidiNoteOff, entry.chs, entry.note, 0, entry.usb);
+    sendOnChannels(MidiNoteOff, entry.chs, entry.note, 0);
 }
 
 function resetPressure(padIndex) {
@@ -613,11 +596,10 @@ function handlePad(type, padIndex, velocity) {
         if (note === null) return;
         if (held[padIndex]) noteOff(held[padIndex]);
         const chs = currentChannels();
-        const usb = usbAllowed();
-        held[padIndex] = { chs, note, usb };
+        held[padIndex] = { chs, note };
         pressure[padIndex] = 0;
         pressureSent[padIndex] = 0;
-        sendOnChannels(MidiNoteOn, chs, note, velocity, usb);
+        sendOnChannels(MidiNoteOn, chs, note, velocity);
     } else if (held[padIndex]) {
         /* Release with the note/channel that was pressed, whatever changed since */
         noteOff(held[padIndex]);
@@ -628,29 +610,25 @@ function handlePad(type, padIndex, velocity) {
 }
 
 /* Channel-wide pressure: channel aftertouch, or a CC in AT_CC mode */
-function sendChannelLevel(chIndex, cc, value, usb) {
-    if (cc === null) sendMidi(AT_CHANNEL_STATUS | chIndex, value, 0, usb);
-    else sendMidi(MidiCC | chIndex, cc, value, usb);
+function sendChannelLevel(chIndex, cc, value) {
+    if (cc === null) sendMidi(AT_CHANNEL_STATUS | chIndex, value, 0);
+    else sendMidi(MidiCC | chIndex, cc, value);
 }
 
 function sendChannelPressure(value) {
     let mask = 0;
-    let usbMask = 0;
     for (const entry of held) {
-        if (!entry) continue;
-        mask |= maskOf(entry.chs);
-        if (entry.usb) usbMask |= maskOf(entry.chs);
+        if (entry) mask |= maskOf(entry.chs);
     }
-    if (mask === 0 || (value === channelSent && mask === channelSentMask && usbMask === channelSentUsbMask)) return;
+    if (mask === 0 || (value === channelSent && mask === channelSentMask)) return;
     const cc = pressureMode === AT_CC ? pressureCC : null;
     /* Channels that lost their last held note get a pressure reset */
     for (let i = 0; i < 16; i++) {
-        if ((channelSentMask & ~mask) & (1 << i)) sendChannelLevel(i, channelSentCC, 0, !!(channelSentUsbMask & (1 << i)));
-        if (mask & (1 << i)) sendChannelLevel(i, cc, value, !!(usbMask & (1 << i)));
+        if ((channelSentMask & ~mask) & (1 << i)) sendChannelLevel(i, channelSentCC, 0);
+        if (mask & (1 << i)) sendChannelLevel(i, cc, value);
     }
     channelSent = value;
     channelSentMask = mask;
-    channelSentUsbMask = usbMask;
     channelSentCC = cc;
 }
 
@@ -658,12 +636,11 @@ function sendChannelPressure(value) {
 function resetChannelPressure() {
     if (channelSent !== 0) {
         for (let i = 0; i < 16; i++) {
-            if (channelSentMask & (1 << i)) sendChannelLevel(i, channelSentCC, 0, !!(channelSentUsbMask & (1 << i)));
+            if (channelSentMask & (1 << i)) sendChannelLevel(i, channelSentCC, 0);
         }
     }
     channelSent = 0;
     channelSentMask = 0;
-    channelSentUsbMask = 0;
 }
 
 /* Forward pressure, rate limited; runs from tick so the final value is never lost */
@@ -679,7 +656,7 @@ function flushPressure() {
             const entry = held[i];
             if (entry && pressure[i] !== pressureSent[i]) {
                 pressureSent[i] = pressure[i];
-                sendOnChannels(AT_POLY_STATUS, entry.chs, entry.note, pressure[i], entry.usb);
+                sendOnChannels(AT_POLY_STATUS, entry.chs, entry.note, pressure[i]);
             }
         }
     } else {
@@ -858,7 +835,6 @@ function resetPreset() {
     clearPressure();
     closeKnobScreen();
     knobBank = 0;
-    requestTrackSync();
     scheduleSave();
     announce(`Set ${preset} reset to defaults. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
         `Output: ${OUT_SPOKEN[output]}`);
@@ -875,7 +851,6 @@ function switchPreset(next) {
     clearPressure();
     closeKnobScreen();
     knobBank = 0;
-    requestTrackSync();
     scheduleSave();
     announce(`Preset ${presetSpeech()}. Channel: ${channelSpeech()}. From ${noteName(fromNote)}. ` +
         `Output: ${OUT_SPOKEN[output]}`);
@@ -982,7 +957,7 @@ function knobStep(value) {
 function sendKnobValue(slot) {
     const fixed = knobChannel[slot] > 0;
     const chs = fixed ? [knobChannel[slot]] : currentChannels();
-    sendOnChannels(MidiCC, chs, knobCC[slot], knobValue[slot], fixed || usbAllowed());
+    sendOnChannels(MidiCC, chs, knobCC[slot], knobValue[slot]);
 }
 
 function setKnobValue(slot, next) {
@@ -1093,7 +1068,6 @@ function setPressure(mode, cc) {
 
 function setOutput(next) {
     output = next;
-    requestTrackSync();
     scheduleSave();
     announceItem(IT_OUT);
 }
@@ -1183,7 +1157,7 @@ function pollCapture() {
 }
 
 function sendProgramChange(value) {
-    for (const ch of currentChannels()) sendMidi(PROGRAM_STATUS | (ch - 1), value, 0, usbAllowed());
+    for (const ch of currentChannels()) sendMidi(PROGRAM_STATUS | (ch - 1), value, 0);
 }
 
 /* Pressure options as one list: Off, Poly, Chan, CC1 ... CC127 */
@@ -1627,7 +1601,7 @@ function drawUI() {
     drawText(126 - help, 0, '[Help]', selItem === IT_HELP);
 
     /* The channel list becomes "multi" when the numbers do not fit next to the label */
-    let chText = autoMode ? `Track ${chs[0]}` : chs.join(',');
+    let chText = autoMode ? 'Auto' : chs.join(',');
     if (text_width(chText) > chFree) chText = 'multi';
     let setText = presetLabel();
     while (setText.length > 1 && text_width(setText) > setFree) setText = setText.slice(0, -1);
