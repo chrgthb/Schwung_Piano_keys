@@ -21,7 +21,7 @@
  *                       send the CCs of the active bank, shown as "CC bank: Left / Right". The
  *                       knob screen stays open on a bank change and shows the new bank's values
  *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
- *                       notes, aftertouch and knob CCs. Active steps are lit.
+ *                       notes, aftertouch and knob CCs. Active steps are lit (none in Track mode).
  *                       A note-on arriving on the external MIDI input flashes the step of its
  *                       channel green (bright on an active step, dim on an inactive one).
  *   Up / Down           octave (lowest note shifts by 12)
@@ -397,7 +397,7 @@ function currentChannels() {
 }
 
 function activeMask() {
-    return autoMode ? 1 << (autoChannel() - 1) : channelMask;
+    return autoMode ? 0 : channelMask;   /* Track mode: no step is lit, the track button shows the choice */
 }
 
 function maskOf(chs) {
