@@ -18,16 +18,21 @@
       "title": "Channel",
       "lines": [
         "Track 1-4: select",
-        " track, stays Auto",
+        " track (green LED),",
+        " Ch stays Track",
         "Left/Right: select",
         " knob bank L / R",
         "Steps 1-16: toggle",
         " channels. All active",
         " ones get the notes",
         "",
-        "Auto: channel of the",
-        " track selected on",
-        " Move"
+        "Track N: channel of",
+        " the track selected",
+        " on Move; nothing",
+        " goes to USB then",
+        "Step buttons: fixed",
+        " channels, sent to",
+        " Move and/or USB"
       ]
     },
     {
@@ -71,7 +76,13 @@
         " Move+USB",
         "",
         "Move = Move tracks",
-        "USB = USB-A device"
+        "USB = USB-A device",
+        "",
+        "Capture/Undo/Mute/X",
+        " go to the selected",
+        " Move track when Out",
+        " has Move, whatever",
+        " Ch is"
       ]
     },
     {
@@ -149,9 +160,10 @@
         " under Move control",
         "",
         "Capture/Undo go to",
-        " Move only (not USB);",
-        " the screen",
-        " shows Capture sent",
+        " the selected Move",
+        " track only (not USB);",
+        " the screen shows",
+        " Capture sent, Track N",
         " (+tempo) / Undo sent",
         "",
         "Mute goes to Move",
