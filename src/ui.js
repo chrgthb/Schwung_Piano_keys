@@ -21,7 +21,8 @@
  *   Left / Right        knob bank L / R (starts on L, back to L on a Set change); the 8 knobs
  *                       send the CCs of the active bank, shown as "CC bank: Left / Right". The
  *                       knob screen stays open on a bank change and shows the new bank's values
- *   Step buttons 1-16   toggle channels 1-16 on/off; every active channel gets
+ *   Step buttons 1-16   toggle channels 1-16 on/off on release; holding one for 2 s leaves only
+ *                       that channel on (also from Auto); every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit (with Ch = Auto the
  *                       step of the selected track's channel).
  *                       A note-on arriving on the external MIDI input flashes the step of its
@@ -153,6 +154,7 @@ const KR_VALUE = 3;
 const KNOB_ROW_COUNT = 4;
 const KNOB_ROW_SPOKEN = ['Name', 'Channel', 'CC', 'Value'];
 const INFO_HOLD_MS = 1200;
+const STEP_HOLD_MS = 2000;       /* a step button held this long (on release) selects only its channel */
 const SAVE_DELAY_MS = 800;
 const SETTINGS_DIR = '/data/UserData/schwung/piano-keys';
 const SETTINGS_FILE = SETTINGS_DIR + '/settings.json';
@@ -256,6 +258,7 @@ let lastSavedText = '';          /* what the settings file holds; an identical s
 let refreshCursor = 0;
 let auxCursor = 0;
 const midiInFlashUntil = new Array(16).fill(0);   /* channel 0-15 -> end of its step LED flash */
+const stepDownAt = new Array(16).fill(0);         /* step 0-15 -> time it was pressed; 0 = not held */
 let trackSyncPending = false;
 let forcedTrack = 0;             /* track 1-4 just picked with its button, not yet selected on Move; 0 = none */
 let trackSyncTries = 0;
@@ -458,6 +461,19 @@ function toggleChannel(index) {
     navChannel = index + 1;
     scheduleSave();
     announce(`Channel ${index + 1} ${channelMask & (1 << index) ? 'on' : 'off'}`);
+}
+
+/* Acts on release: a short press toggles the channel, a hold of STEP_HOLD_MS or more leaves only it */
+function handleStep(index, pressed) {
+    if (pressed) {
+        stepDownAt[index] = Date.now();
+        return;
+    }
+    const downAt = stepDownAt[index];
+    if (!downAt) return;
+    stepDownAt[index] = 0;
+    if (Date.now() - downAt >= STEP_HOLD_MS) selectSingleChannel(index + 1);
+    else toggleChannel(index);
 }
 
 /* Move track (1-4) to select: only one picked with a track button, never derived from the channels; 0 = none */
@@ -1393,8 +1409,8 @@ globalThis.onMidiMessageInternal = function (data) {
             handlePad(type, padIndex, data[2]);
             boostFrames = BOOST_FRAMES;
         }
-        else if (type === MidiNoteOn && data[2] > 0 && data[1] >= FIRST_STEP && data[1] < FIRST_STEP + 16) {
-            toggleChannel(data[1] - FIRST_STEP);
+        else if (data[1] >= FIRST_STEP && data[1] < FIRST_STEP + 16) {
+            handleStep(data[1] - FIRST_STEP, type === MidiNoteOn && data[2] > 0);
         }
     } else if (type === MidiCC) {
         handleCC(data[1], data[2]);

@@ -25,6 +25,8 @@
         "Steps 1-16: toggle",
         " channels. All active",
         " ones get the notes",
+        "Hold a step 2 s:",
+        " only that channel",
         "",
         "Ch Auto: channel N",
         " = selected track N",
