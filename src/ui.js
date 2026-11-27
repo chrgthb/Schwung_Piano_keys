@@ -21,7 +21,8 @@
  *   Left / Right        knob bank L / R (starts on L, back to L on a Set change); the 8 knobs
  *                       send the CCs of the active bank, shown as "CC bank: Left / Right". The
  *                       knob screen stays open on a bank change and shows the new bank's values
- *   Step buttons 1-16   toggle channels 1-16 on/off on release; holding one for 2 s at once leaves only
+ *   Step buttons 1-16   toggle channels 1-16 on/off on release (switching the only active channel
+ *                       off goes back to Auto); holding one for 1 s at once leaves only
  *                       that channel on (also from Auto); every active channel gets
  *                       notes, aftertouch and knob CCs. Active steps are lit (with Ch = Auto the
  *                       step of the selected track's channel).
@@ -154,7 +155,7 @@ const KR_VALUE = 3;
 const KNOB_ROW_COUNT = 4;
 const KNOB_ROW_SPOKEN = ['Name', 'Channel', 'CC', 'Value'];
 const INFO_HOLD_MS = 1200;
-const STEP_HOLD_MS = 2000;       /* a step button held this long selects only its channel */
+const STEP_HOLD_MS = 1000;       /* a step button held this long selects only its channel */
 const STEP_DONE = -1;            /* stepDownAt value: the hold was already acted on */
 const SAVE_DELAY_MS = 800;
 const SETTINGS_DIR = '/data/UserData/schwung/piano-keys';
@@ -453,8 +454,8 @@ function toggleChannel(index) {
         channelMask = 1 << index;
     } else {
         const next = channelMask ^ (1 << index);
-        if (next === 0) {            /* keep at least one channel */
-            announce(`Channel ${index + 1} stays on`);
+        if (next === 0) {            /* the only channel switched off: back to Auto */
+            selectSingleChannel(0);
             return;
         }
         channelMask = next;
