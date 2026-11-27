@@ -57,6 +57,10 @@
  *   Delete (X)          without Shift sent to Move only (not to USB); the display shows "Delete sent" and "Track N"
  *   Shift + Mute        All MIDI notes off (CC 123 on all channels) to the selected output(s)
  *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
+ *   Knob touch (Ch = Auto and Out = Move or Move+USB): the knobs and the screen go to Move (co-run
+ *                       with Move's native editor), the knob does its native job on the selected
+ *                       track. Back, or NATIVE_HOLD_MS after the last release, returns. Shift + touch
+ *                       opens the module's own knob screen instead (below)
  *   Knob touch          the knob screen replaces the main screen while the knob is held and for 1.2 s
  *                       after: Name / Ch / CC / Value of that knob. Jog turn picks the row, jog click
  *                       edits it ("(editing)" top right; Name opens the name keyboard instead).
@@ -1025,6 +1029,72 @@ function handleKnobTouch(knob, touched) {
     else holdKnobScreen();
 }
 
+/* Native knobs: with Ch = Auto and Move as an output, touching a knob hands the knobs and the
+   screen to Move (co-run), so the knob does what it does natively on the selected track. The
+   module keeps everything else, including the knob touch notes, which it forwards to Move itself
+   so it can see when the knob is released. Back (consumed by Schwung) or NATIVE_HOLD_MS after
+   the last release returns to the module's screen. Shift + touch opens the module's knob screen */
+const NATIVE_HOLD_MS = 2000;
+const nativeTouched = new Array(KNOB_COUNT).fill(false);
+let nativeActive = false;
+let nativeUntil = 0;
+
+function canGoNative() {
+    return autoMode && output !== OUT_USB && !shiftHeld && !knobEditing && !knobTouched.includes(true) &&
+        !helpOpen && !resetPending && typeof shadow_corun_begin_cede === 'function' &&
+        typeof shadow_corun_end === 'function' && typeof CORUN_TARGET_MOVE_NATIVE === 'number' &&
+        typeof move_midi_inject_to_move === 'function';
+}
+
+function injectKnobTouch(knob, on) {
+    move_midi_inject_to_move(on ? [0x09, MidiNoteOn, KNOB_TOUCH_FIRST + knob, 127]
+        : [0x08, MidiNoteOff, KNOB_TOUCH_FIRST + knob, 0]);
+}
+
+function endNative() {
+    if (!nativeActive) return;
+    nativeActive = false;
+    for (let k = 0; k < KNOB_COUNT; k++) {
+        if (!nativeTouched[k]) continue;
+        nativeTouched[k] = false;
+        injectKnobTouch(k, false);
+    }
+    if (typeof shadow_corun_state === 'function' && shadow_corun_state()) shadow_corun_end();
+    closeKnobScreen();
+    lastDraw = 0;
+}
+
+/* True when the touch belongs to Move */
+function handleNativeTouch(knob, touched) {
+    if (touched) {
+        if (!nativeActive) {
+            if (!canGoNative()) return false;
+            shadow_corun_begin_cede(CORUN_TARGET_MOVE_NATIVE, autoChannel() - 1, CORUN_GRP_OLED | CORUN_GRP_KNOBS, 0);
+            nativeActive = true;
+            closeKnobScreen();
+        }
+        nativeTouched[knob] = true;
+        injectKnobTouch(knob, true);
+        announce(`Knob ${knob + 1}, Move`);
+        return true;
+    }
+    if (!nativeTouched[knob]) return false;
+    nativeTouched[knob] = false;
+    injectKnobTouch(knob, false);
+    nativeUntil = Date.now() + NATIVE_HOLD_MS;
+    return true;
+}
+
+function pollNative() {
+    if (!nativeActive) return;
+    /* Schwung ended the co-run itself (Back) */
+    if (typeof shadow_corun_state === 'function' && !shadow_corun_state()) {
+        endNative();
+        return;
+    }
+    if (!nativeTouched.includes(true) && Date.now() >= nativeUntil) endNative();
+}
+
 function announceKnobRow(prefix = '') {
     const slot = knobSlot(lastKnob);
     const values = [knobName[slot] || 'no name', knobChannelText(slot) === 'Pad' ? 'pad channels' : knobChannelText(slot),
@@ -1246,6 +1316,11 @@ function handleCC(cc, value) {
         return;
     }
 
+    /* While Move has the knobs and the screen, the jog and knob CCs (stragglers from before the
+       hand-over) must not change anything on the hidden module screen */
+    if (nativeActive && (cc === MoveMainButton || cc === MoveMainKnob ||
+        (cc >= KNOB_CC_FIRST && cc < KNOB_CC_FIRST + KNOB_COUNT))) return;
+
     /* Jog click toggles between moving the selection and editing its value.
        Shift + jog click renames the Set; with Vol touched it is Schwung's exit combo */
     if (cc === MoveMainButton) {
@@ -1396,6 +1471,7 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Knob touch: handled before the filters, which drop capacitive touch */
     if ((type === MidiNoteOn || type === MidiNoteOff) &&
         data[1] >= KNOB_TOUCH_FIRST && data[1] < KNOB_TOUCH_FIRST + KNOB_COUNT) {
+        if (handleNativeTouch(data[1] - KNOB_TOUCH_FIRST, type === MidiNoteOn && data[2] > 0)) return;
         handleKnobTouch(data[1] - KNOB_TOUCH_FIRST, type === MidiNoteOn && data[2] > 0);
         return;
     }
@@ -1687,6 +1763,8 @@ globalThis.init = function () {
     resetPending = false;
     resetKnobSlot = -1;
     knobTouched.fill(false);
+    nativeTouched.fill(false);
+    nativeActive = false;
     closeKnobScreen();
     knobSel = KR_VALUE;
     knobBank = 0;
@@ -1712,6 +1790,7 @@ let shutDown = false;
 function shutdown() {
     if (shutDown) return;
     shutDown = true;
+    endNative();
     closeTextEntry();
     releaseAll();
     for (let i = 0; i < 32; i++) setLED(FIRST_PAD + i, Black, true);
@@ -1752,5 +1831,6 @@ globalThis.tick = function () {
     tickTextEntry();
     updateTransportLeds();
     updateLeds();
-    drawUI();
+    pollNative();
+    if (!nativeActive) drawUI();
 };
