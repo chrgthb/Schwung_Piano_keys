@@ -1,6 +1,6 @@
 # Piano Keys – Schwung module for Ableton Move
 
-An overtake module that turns the 32 pads into a piano keyboard instead of Move's original in-key / chromatic mode. Works as a simple MIDI controller, can send things even on multiple MIDI channels. Knobs and aftertouch can be set to different CC.
+An overtake module that turns the 32 pads into a piano keyboard instead of Move's original in-key / chromatic mode. Works as a simple MIDI controller, can send things even on multiple MIDI channels. Knobs and aftertouch can be set to different CCs. When Ch is Auto and Out includes Move (Move or Move+USB), touching a knob hands the knobs over to Move, so they control Move's own parameters instead of sending CC (Shift + touch opens the module's own knob screen instead).
 
 <p align="center">
   <img src="images/Piano_Keys.png" alt="Piano Keys on Ableton Move" width="700">
@@ -61,7 +61,7 @@ Notes go to Move's own tracks by default (cable-2 injection), so the track liste
 
 **Notices**: Capture, Undo, Mute, Delete, Menu and Shift + Mute show their message ("Capture sent", "Undo sent", "Mute/unmute sent", "Delete sent", "Black keys: …", "All notes off") on the whole screen for 2.5 s, whichever screen was shown (main, Knob, Help). Then the previous screen returns; if it was the Knob screen without editing or touch, it stays for its usual 1.2 s before the main screen comes back.
 
-**Knob CCs**: they use the same channel and output target as the notes. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments, names, channels and values) and their names, the active preset and the black key layout are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start. Knob values are kept in memory while turning and written to the file when the Set changes or the module exits (not on every turn); to save them on exit, leave the module with the Back button; changing a knob's CC number or resetting the Set sets the value back to 64.
+**Knob CCs**: they use the same channel and output target as the notes. Exception: with Ch = Auto and Out = Move or Move+USB, touching a knob hands the knobs and the screen over to Move (Schwung co-run), so that knob works as Move's native knob on the track selected on Move and the module sends no CC for it. This lasts until Back, a jog turn or click, or 2 s after the last release. Hold Shift while touching to use the module's knob screen and CCs instead. With fixed channels (Ch not Auto) or Out = USB the knobs always send CC. This needs a Schwung that offers `shadow_corun_begin_cede`; without it the knobs always send CC. The 10 presets (channels, From, program, output, pressure mode and CC, knob CC assignments, names, channels and values) and their names, the active preset and the black key layout are saved to `/data/UserData/schwung/piano-keys/settings.json` and restored on the next start. Knob values are kept in memory while turning and written to the file when the Set changes or the module exits (not on every turn); to save them on exit, leave the module with the Back button; changing a knob's CC number or resetting the Set sets the value back to 64.
 
 ## Screen reader
 
