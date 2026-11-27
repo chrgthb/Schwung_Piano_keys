@@ -59,8 +59,9 @@
  *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
  *   Knob touch (Ch = Auto and Out = Move or Move+USB): the knobs and the screen go to Move (co-run
  *                       with Move's native editor), the knob does its native job on the selected
- *                       track. Back, or NATIVE_HOLD_MS after the last release, returns. Shift + touch
- *                       opens the module's own knob screen instead (below)
+ *                       track. NATIVE_HOLD_MS after the last release, or Shift, returns (the LEDs under
+ *                       the knobs are cleared); Back exits the module. Shift + touch opens the
+ *                       module's own knob screen instead (below)
  *   Knob touch          the knob screen replaces the main screen while the knob is held and for 1.2 s
  *                       after: Name / Ch / CC / Value of that knob. Jog turn picks the row, jog click
  *                       edits it ("(editing)" top right; Name opens the name keyboard instead).
@@ -1032,9 +1033,14 @@ function handleKnobTouch(knob, touched) {
 /* Native knobs: with Ch = Auto and Move as an output, touching a knob hands the knobs and the
    screen to Move (co-run), so the knob does what it does natively on the selected track. The
    module keeps everything else, including the knob touch notes, which it forwards to Move itself
-   so it can see when the knob is released. Back (consumed by Schwung) or NATIVE_HOLD_MS after
-   the last release returns to the module's screen. Shift + touch opens the module's knob screen */
+   so it can see when the knob is released. NATIVE_HOLD_MS after the last release, or Shift, returns
+   to the module's screen (Shift with a knob still held opens the module's knob screen for it);
+   Back exits the module. Shift + touch opens the module's knob screen without the hand-over */
 const NATIVE_HOLD_MS = 2000;
+const KNOB_LED_CLEARS = 3;       /* Move may still repaint the rings right after the hand-back */
+const KNOB_LED_CLEAR_MS = 100;
+let knobLedClearsLeft = 0;
+let knobLedClearAt = 0;
 const nativeTouched = new Array(KNOB_COUNT).fill(false);
 let nativeActive = false;
 let nativeUntil = 0;
@@ -1043,6 +1049,7 @@ function canGoNative() {
     return autoMode && output !== OUT_USB && !shiftHeld && !knobEditing && !knobTouched.includes(true) &&
         !helpOpen && !resetPending && typeof shadow_corun_begin_cede === 'function' &&
         typeof shadow_corun_end === 'function' && typeof CORUN_TARGET_MOVE_NATIVE === 'number' &&
+        typeof CORUN_F_OWN_BACK === 'number' &&
         typeof move_midi_inject_to_move === 'function';
 }
 
@@ -1051,17 +1058,36 @@ function injectKnobTouch(knob, on) {
         : [0x08, MidiNoteOff, KNOB_TOUCH_FIRST + knob, 0]);
 }
 
-function endNative() {
+/* The rings under the knobs show the value Move last drew; they mean nothing to the module */
+function clearKnobLeds() {
+    for (let k = 0; k < KNOB_COUNT; k++) setButtonLED(KNOB_CC_FIRST + k, Black, true);
+}
+
+function pollKnobLeds() {
+    if (!knobLedClearsLeft || Date.now() < knobLedClearAt) return;
+    clearKnobLeds();
+    knobLedClearsLeft--;
+    knobLedClearAt = Date.now() + KNOB_LED_CLEAR_MS;
+}
+
+/* Hands the knobs and the screen back; toModule: knobs still held get the module's knob screen */
+function endNative(toModule = false) {
     if (!nativeActive) return;
     nativeActive = false;
+    const held = [];
     for (let k = 0; k < KNOB_COUNT; k++) {
         if (!nativeTouched[k]) continue;
         nativeTouched[k] = false;
         injectKnobTouch(k, false);
+        held.push(k);
     }
     if (typeof shadow_corun_state === 'function' && shadow_corun_state()) shadow_corun_end();
     closeKnobScreen();
     lastDraw = 0;
+    clearKnobLeds();
+    knobLedClearsLeft = KNOB_LED_CLEARS;
+    knobLedClearAt = Date.now() + KNOB_LED_CLEAR_MS;
+    if (toModule) held.forEach(k => handleKnobTouch(k, true));
 }
 
 /* True when the touch belongs to Move */
@@ -1069,7 +1095,7 @@ function handleNativeTouch(knob, touched) {
     if (touched) {
         if (!nativeActive) {
             if (!canGoNative()) return false;
-            shadow_corun_begin_cede(CORUN_TARGET_MOVE_NATIVE, autoChannel() - 1, CORUN_GRP_OLED | CORUN_GRP_KNOBS, 0);
+            shadow_corun_begin_cede(CORUN_TARGET_MOVE_NATIVE, autoChannel() - 1, CORUN_GRP_OLED | CORUN_GRP_KNOBS, CORUN_F_OWN_BACK);
             nativeActive = true;
             closeKnobScreen();
         }
@@ -1087,7 +1113,7 @@ function handleNativeTouch(knob, touched) {
 
 function pollNative() {
     if (!nativeActive) return;
-    /* Schwung ended the co-run itself (Back) */
+    /* Schwung ended the co-run itself */
     if (typeof shadow_corun_state === 'function' && !shadow_corun_state()) {
         endNative();
         return;
@@ -1313,6 +1339,7 @@ function shiftOctave(octaves) {
 function handleCC(cc, value) {
     if (cc === MoveShift) {
         shiftHeld = value > 0;
+        if (shiftHeld) endNative(true);
         return;
     }
 
@@ -1765,6 +1792,7 @@ globalThis.init = function () {
     knobTouched.fill(false);
     nativeTouched.fill(false);
     nativeActive = false;
+    knobLedClearsLeft = 0;
     closeKnobScreen();
     knobSel = KR_VALUE;
     knobBank = 0;
@@ -1832,5 +1860,6 @@ globalThis.tick = function () {
     updateTransportLeds();
     updateLeds();
     pollNative();
+    pollKnobLeds();
     if (!nativeActive) drawUI();
 };
