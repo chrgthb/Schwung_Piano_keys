@@ -59,10 +59,10 @@
  *   Knobs 1-8           send MIDI CC (bank L default CC 71-78, bank R CC 79-86, relative -> absolute 0..127)
  *   Knob touch (Ch = Auto and Out = Move or Move+USB): the knobs and the screen go to Move (co-run
  *                       with Move's native editor), the knob does its native job on the selected
- *                       track. Back, or NATIVE_HOLD_MS after the last release, returns (the LEDs under
- *                       the knobs are cleared); a Back within 1 s of the return is ignored, so it
- *                       does not exit the module. Shift + touch opens the module's own knob screen
- *                       instead (below)
+ *                       track. Back, a jog turn or click, or NATIVE_HOLD_MS after the last release
+ *                       returns (the LEDs under the knobs are cleared); a Back within 1 s of the
+ *                       return is ignored, so it does not exit the module. Shift + touch opens the
+ *                       module's own knob screen instead (below)
  *   Knob touch          the knob screen replaces the main screen while the knob is held and for 1.2 s
  *                       after: Name / Ch / CC / Value of that knob. Jog turn picks the row, jog click
  *                       edits it ("(editing)" top right; Name opens the name keyboard instead).
@@ -1034,9 +1034,10 @@ function handleKnobTouch(knob, touched) {
 /* Native knobs: with Ch = Auto and Move as an output, touching a knob hands the knobs and the
    screen to Move (co-run), so the knob does what it does natively on the selected track. The
    module keeps everything else, including the knob touch notes, which it forwards to Move itself
-   so it can see when the knob is released. Back (consumed by Schwung) or NATIVE_HOLD_MS after
-   the last release returns to the module's screen; a Back within BACK_GUARD_MS of that return is
-   ignored, so a late press does not exit the module. Shift + touch opens the module's knob screen */
+   so it can see when the knob is released. Back (consumed by Schwung), a jog turn or click, or
+   NATIVE_HOLD_MS after the last release returns to the module's screen; a Back within
+   BACK_GUARD_MS of that return is ignored, so a late press does not exit the module.
+   Shift + touch opens the module's knob screen */
 const NATIVE_HOLD_MS = 2000;
 const BACK_GUARD_MS = 1000;
 let backIgnoreUntil = 0;
@@ -1341,10 +1342,12 @@ function handleCC(cc, value) {
         return;
     }
 
-    /* While Move has the knobs and the screen, the jog and knob CCs (stragglers from before the
-       hand-over) must not change anything on the hidden module screen */
-    if (nativeActive && (cc === MoveMainButton || cc === MoveMainKnob ||
-        (cc >= KNOB_CC_FIRST && cc < KNOB_CC_FIRST + KNOB_COUNT))) return;
+    /* While Move has the knobs and the screen, a jog turn or click only brings the module's screen
+       back; knob CCs (stragglers from before the hand-over) change nothing on the hidden screen */
+    if (nativeActive) {
+        if ((cc === MoveMainKnob || cc === MoveMainButton) && value > 0) endNative();
+        if (cc === MoveMainKnob || cc === MoveMainButton || (cc >= KNOB_CC_FIRST && cc < KNOB_CC_FIRST + KNOB_COUNT)) return;
+    }
 
     /* Jog click toggles between moving the selection and editing its value.
        Shift + jog click renames the Set; with Vol touched it is Schwung's exit combo */
